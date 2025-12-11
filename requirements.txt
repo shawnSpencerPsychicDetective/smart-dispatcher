@@ -1,3 +1,5 @@
 openai
 mcp
 python-dotenv
+aiosmtpd
+Faker
