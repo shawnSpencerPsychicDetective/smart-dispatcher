@@ -1,0 +1,9 @@
+# Ignore the Virtual Environment (too big)
+venv/
+__pycache__/
+
+# Ignore the Database (local data only)
+*.db
+
+# CRITICAL: Ignore your API Keys
+.env
