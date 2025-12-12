@@ -3,6 +3,7 @@ import os
 
 
 def create_database():
+    # Ensure we overwrite any broken/empty file
     if os.path.exists("maintenance.db"):
         os.remove("maintenance.db")
 
@@ -14,7 +15,7 @@ def create_database():
     CREATE TABLE IF NOT EXISTS tenants (
         id INTEGER PRIMARY KEY,
         name TEXT,
-        slack_user_id TEXT,  -- NEW: Links Chat ID to Tenant
+        slack_user_id TEXT,  -- Links Chat ID to Tenant
         unit_number TEXT,
         phone_number TEXT
     )
@@ -32,7 +33,7 @@ def create_database():
     )
     """)
 
-    # 3. NEW: Vendors Table (Per Section 3.4.2)
+    # 3. Vendors Table (Per Section 3.4.2)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS vendors (
         id INTEGER PRIMARY KEY,
@@ -56,30 +57,48 @@ def create_database():
 
     # --- SEED DATA ---
 
-    # Tenants (Mapping U402 -> Alice)
-    cursor.execute(
-        "INSERT INTO tenants (name, slack_user_id, unit_number, phone_number) VALUES ('Alice', 'U402', '402', '+15550199')")
-    cursor.execute(
-        "INSERT INTO tenants (name, slack_user_id, unit_number, phone_number) VALUES ('Bob', 'U101', '101', '+15550200')")
+    # Tenants
+    # Charlie (U205) is our test subject for multiple assets.
+    tenants_data = [
+        ('Alice', 'U402', '402', '+15550199'),
+        ('Bob', 'U101', '101', '+15550200'),
+        ('Charlie', 'U205', '205', '+15550201'),
+        ('Diana', 'U303', '303', '+15550202')
+    ]
+    cursor.executemany("INSERT INTO tenants (name, slack_user_id, unit_number, phone_number) VALUES (?, ?, ?, ?)",
+                       tenants_data)
 
     # Assets
-    cursor.execute(
-        "INSERT INTO assets (unit_number, asset_name, brand, serial_number, warranty_expires) VALUES ('402', 'Air Conditioner', 'Samsung', 'SN-AC-402', '2026-12-31')")
-    cursor.execute(
-        "INSERT INTO assets (unit_number, asset_name, brand, serial_number, warranty_expires) VALUES ('101', 'Water Heater', 'GenericCorp', 'SN-WH-101', '2022-01-01')")
+    # Note: Unit 205 has TWO assets.
+    assets_data = [
+        ('402', 'Air Conditioner', 'Samsung', 'SN-AC-402', '2026-12-31'),
+        ('101', 'Water Heater', 'GenericCorp', 'SN-WH-101', '2022-01-01'),
+        ('205', 'Refrigerator', 'LG', 'SN-REF-205', '2027-05-20'),  # Charlie Asset 1
+        ('205', 'Dishwasher', 'Bosch', 'SN-DW-205', '2023-11-15'),  # Charlie Asset 2 (Expired)
+        ('303', 'Washing Machine', 'Whirlpool', 'SN-WM-303', '2025-08-10')
+    ]
+    cursor.executemany(
+        "INSERT INTO assets (unit_number, asset_name, brand, serial_number, warranty_expires) VALUES (?, ?, ?, ?, ?)",
+        assets_data)
 
-    # Vendors (Strict contact info - No Hallucinations)
-    vendors = [
-        ('Samsung', 'warranty@samsung.com', False),  # Manufacturer
-        ('GenericCorp', 'support@generic.com', False),  # Manufacturer
-        ('Internal Handyman', 'maintenance@building.com', True)  # Internal Staff
+    # Vendors
+    # Added vendors for the new assets to ensure strict lookup (No Hallucinations)
+    vendors_data = [
+        ('Samsung', 'warranty@samsung.com', False),
+        ('GenericCorp', 'support@generic.com', False),
+        ('Internal Handyman', 'maintenance@building.com', True),
+        ('LG', 'warranty@lg.com', False),
+        ('Bosch', 'service@bosch-home.com', False),
+        ('Whirlpool', 'help@whirlpool.com', False)
     ]
     cursor.executemany("INSERT INTO vendors (brand_affiliation, contact_email, is_internal_staff) VALUES (?, ?, ?)",
-                       vendors)
+                       vendors_data)
 
     conn.commit()
     conn.close()
-    print("✅ Database aligned with Requirements.pdf (Tables: tenants, assets, vendors, email_logs).")
+    print("✅ Database updated with expanded records.")
+    print("   - Added Tenant 'Charlie' (U205) with 2 assets.")
+    print("   - Added new vendors (LG, Bosch, Whirlpool).")
 
 
 if __name__ == "__main__":

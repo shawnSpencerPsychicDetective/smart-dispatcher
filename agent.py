@@ -160,21 +160,27 @@ async def run_agent():
                 print(f"🔍 Identified Tenant: {tenant['name']} in Unit {tenant['unit_number']}")
 
                 # 3. Start Agent Reasoning
+                # In agent.py, find the 'messages' list and replace the system prompt with this stricter version:
+
                 messages = [
                     {"role": "system", "content": f"""
                     You are the Smart Dispatcher. 
                     Current Date: {datetime.now().strftime('%Y-%m-%d')}.
                     Tenant Unit: {tenant['unit_number']}.
 
-                    PROTOCOL:
-                    1. Use 'get_assets' to find the relevant appliance in the unit.
-                    2. Check Warranty Expiration.
-                    3. IF ACTIVE: Retrieve Vendor Email (Manufacturer) -> Dispatch Email directly.
-                    4. IF EXPIRED: Retrieve Vendor Email (Internal Handyman) -> Check Calendar -> Book Slot -> Dispatch Email.
+                    PROTOCOL (STRICT ORDER):
+                    1. SEARCH: Use 'get_assets' to find the appliance.
+                    2. CHECK: Use 'check_warranty_status'.
+                    3. DECIDE:
+                       - IF ACTIVE: Retrieve Manufacturer Email -> Dispatch Email immediately.
+                       - IF EXPIRED (INTERNAL HANDYMAN):
+                           a. FIRST, call 'check_calendar_availability'.
+                           b. SECOND, call 'book_appointment' for the first available slot.
+                           c. THIRD, call 'dispatch_email' to 'handyman@buildingmaint.com' with the time slot details.
 
-                    RESTRICTION: 
-                    - Do NOT make up emails. Use the email provided by the database/context.
-                    - Emails MUST contain the Asset Serial Number[cite: 70].
+                    RESTRICTIONS:
+                    - Never email the Handyman without booking a slot first.
+                    - Emails MUST include the Asset Serial Number.
                     """},
                     {"role": "user", "content": user_message}
                 ]
