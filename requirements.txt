@@ -3,3 +3,5 @@ mcp
 python-dotenv
 aiosmtpd
 Faker
+streamlit
+Pandas
