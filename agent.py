@@ -23,8 +23,7 @@ server_params = StdioServerParameters(
     env=None
 )
 
-
-# --- LOCAL HELPER FUNCTIONS (To replace direct SQL in Agent) ---
+# --- LOCAL HELPER FUNCTIONS ---
 def get_tenant_by_chat_id(slack_id):
     conn = sqlite3.connect("maintenance.db")
     cursor = conn.cursor()
@@ -34,27 +33,6 @@ def get_tenant_by_chat_id(slack_id):
     if result:
         return {"name": result[0], "unit_number": result[1]}
     return None
-
-
-def get_vendor_contact(brand_name, is_expired):
-    conn = sqlite3.connect("maintenance.db")
-    cursor = conn.cursor()
-
-    if is_expired:
-        # If expired, we MUST use Internal Staff (Requirement 3.2.2)
-        cursor.execute("SELECT contact_email, brand_affiliation FROM vendors WHERE is_internal_staff=1")
-    else:
-        # If active, try to find the Manufacturer
-        cursor.execute("SELECT contact_email, brand_affiliation FROM vendors WHERE brand_affiliation=?", (brand_name,))
-
-    result = cursor.fetchone()
-    conn.close()
-
-    if result:
-        return {"email": result[0], "name": result[1]}
-    # Fallback to internal if manufacturer not found
-    return {"email": "maintenance@building.com", "name": "Internal Handyman"}
-
 
 async def run_agent():
     print("🤖 Smart Dispatcher (Aligned) Initializing...")
@@ -66,22 +44,9 @@ async def run_agent():
         async with ClientSession(read, write) as session:
             await session.initialize()
 
-            # Define Tools for OpenAI
+            # 1. Define Local Tools (Calendar & Email ONLY)
+            # Note: check_warranty_status is REMOVED from here because it is now an MCP tool
             openai_tools = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "check_warranty_status",
-                        "description": "Check if an asset's warranty is active based on the expiration date.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "expiration_date": {"type": "string", "description": "YYYY-MM-DD"}
-                            },
-                            "required": ["expiration_date"]
-                        }
-                    }
-                },
                 {
                     "type": "function",
                     "function": {
@@ -130,7 +95,7 @@ async def run_agent():
                 }
             ]
 
-            # Add existing MCP tools (SQLite)
+            # 2. Add MCP tools (This automatically pulls 'check_warranty_status' from mcp_server.py)
             mcp_tools = await session.list_tools()
             for tool in mcp_tools.tools:
                 openai_tools.append({
@@ -145,22 +110,17 @@ async def run_agent():
             print("\n✅ System Ready. Simulating Chat Interface.")
 
             while True:
-                # 1. Simulate the "Chat MCP" input (Req 3.2.1)
                 chat_id_input = input("\n[Incoming Message] Enter Slack User ID (e.g., U402, U101) or 'quit': ")
                 if chat_id_input.lower() in ["quit", "exit"]: break
 
                 user_message = input("[Incoming Message] Tenant Complaint: ")
 
-                # 2. Identify Tenant (Req 3.2.1)
                 tenant = get_tenant_by_chat_id(chat_id_input)
                 if not tenant:
                     print("❌ Unknown Slack ID. Ignoring.")
                     continue
 
                 print(f"🔍 Identified Tenant: {tenant['name']} in Unit {tenant['unit_number']}")
-
-                # 3. Start Agent Reasoning
-                # In agent.py, find the 'messages' list and replace the system prompt with this stricter version:
 
                 messages = [
                     {"role": "system", "content": f"""
@@ -170,17 +130,16 @@ async def run_agent():
 
                     PROTOCOL (STRICT ORDER):
                     1. SEARCH: Use 'get_assets' to find the appliance.
-                    2. CHECK: Use 'check_warranty_status'.
+                    2. CHECK: Use 'check_warranty_status' (Requires asset_name and unit_number).
                     3. DECIDE:
-                       - IF ACTIVE: Retrieve Manufacturer Email -> Dispatch Email immediately.
-                       - IF EXPIRED (INTERNAL HANDYMAN):
-                           a. FIRST, call 'check_calendar_availability'.
-                           b. SECOND, call 'book_appointment' for the first available slot.
-                           c. THIRD, call 'dispatch_email' to 'handyman@buildingmaint.com' with the time slot details.
+                       - IF ACTIVE: The tool returns the Manufacturer Email. Dispatch Email immediately.
+                       - IF EXPIRED: The tool returns the Internal Handyman Email.
+                           a. Call 'check_calendar_availability'.
+                           b. Call 'book_appointment'.
+                           c. Call 'dispatch_email' with the time slot details.
 
                     RESTRICTIONS:
-                    - Never email the Handyman without booking a slot first.
-                    - Emails MUST include the Asset Serial Number.
+                    - Use the EXACT email and Serial Number returned by 'check_warranty_status'.
                     """},
                     {"role": "user", "content": user_message}
                 ]
@@ -201,17 +160,8 @@ async def run_agent():
 
                         result_content = ""
 
-                        # --- LOCAL TOOLS ---
-                        if fname == "check_warranty_status":
-                            exp_date = datetime.strptime(args["expiration_date"], "%Y-%m-%d")
-                            now = datetime.now()
-                            is_expired = now > exp_date
-                            # AUTO-LOOKUP VENDOR HERE to save a step
-                            # We assume the agent knows the brand from the asset lookup previous step
-                            # This is a simplification; ideally, we pass brand here.
-                            result_content = f"Expired? {is_expired}. (If True -> Use Internal Handyman. If False -> Use Manufacturer)."
-
-                        elif fname == "check_calendar_availability":
+                        # --- LOCAL TOOLS (Calendar/Email) ---
+                        if fname == "check_calendar_availability":
                             result_content = str(calendar_tool.check_availability(args["date"]))
 
                         elif fname == "book_appointment":
@@ -222,35 +172,20 @@ async def run_agent():
                                 args["subject"], args["body"], args["recipient_email"]
                             )
 
-                        # --- MCP TOOLS (Database) ---
+                        # --- MCP TOOLS (Database & Warranty Logic) ---
+                        # This now handles 'check_warranty_status' automatically!
                         else:
-                            # If checking assets, result helps us find the brand
                             mcp_result = await session.call_tool(fname, arguments=args)
                             result_content = mcp_result.content[0].text
-
-                            # HELPER: If this was 'get_assets', let's peek at the brand to help the agent
-                            if "brand" in result_content and fname == "get_assets":
-                                # This is a bit of a "cheat" to inject the vendor email into the context
-                                # so the agent doesn't have to query a separate 'get_vendors' tool.
-                                # In a strict implementation, we would make 'get_vendors' a tool.
-                                pass
-
-                                # If the agent needs a vendor email, we provide a helper context
-                            # We can inject the vendor list into the system prompt or just let it deduce.
-                            # Better approach: Let's give it a special tool or just inject data.
-                            # For simplicity, we will let the agent ask for "Vendor Info" via Python if needed,
-                            # but simpler is to inject the vendor table or just use the helper:
 
                         messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": str(result_content)})
 
                     # Run Again
-                    response = await openai.chat.completions.create(model="gpt-4o", messages=messages,
-                                                                    tools=openai_tools)
+                    response = await openai.chat.completions.create(model="gpt-4o", messages=messages, tools=openai_tools)
                     response_msg = response.choices[0].message
                     tool_calls = response_msg.tool_calls
 
                 print(f"💬 Agent: {response_msg.content}")
-
 
 if __name__ == "__main__":
     asyncio.run(run_agent())
