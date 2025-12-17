@@ -5,12 +5,13 @@ import os
 import sqlite3
 from dotenv import load_dotenv
 
-# LIVEKIT (Stable Pre-1.0)
+# LIVEKIT IMPORTS
 from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli, llm
 from livekit.agents.pipeline import VoicePipelineAgent
 from livekit.plugins import openai, silero
+from livekit import rtc  # <--- IMPORTING THIS FIXES THE CRASH
 
-# MCP
+# MCP IMPORTS
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -24,7 +25,11 @@ logger = logging.getLogger("voice-agent")
 
 # --- DATABASE HELPER ---
 def get_tenant_from_db(user_identity):
-    # In a real app, use user_identity. For demo, force U205.
+    # Check if DB exists
+    if not os.path.exists("maintenance.db"):
+        print("⚠️ ERROR: maintenance.db not found in current directory!")
+        return {"name": "Unknown", "unit_number": "Unknown"}
+
     target_id = "U205"
     try:
         conn = sqlite3.connect("maintenance.db")
@@ -34,7 +39,8 @@ def get_tenant_from_db(user_identity):
         conn.close()
         if row:
             return {"name": row[0], "unit_number": row[1]}
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ DB Read Error: {e}")
         pass
     return {"name": "Valued Tenant", "unit_number": "Unknown"}
 
@@ -52,7 +58,6 @@ class DispatcherTools(llm.FunctionContext):
         try:
             # 1. Get Assets
             assets_result = await self.mcp.call_tool("get_assets", arguments={})
-            # (In a real scenario, we'd filter this list, but for now we proceed)
 
             # 2. Check Warranty
             result = await self.mcp.call_tool("check_warranty_status", arguments={
@@ -61,7 +66,7 @@ class DispatcherTools(llm.FunctionContext):
             })
             return result.content[0].text
         except Exception as e:
-            return f"Error connecting to database: {str(e)}"
+            return f"Error connecting to database via MCP: {str(e)}"
 
     @llm.ai_callable(description="Send dispatch email")
     def send_email(self, recipient: str, subject: str, body: str):
@@ -86,7 +91,7 @@ async def entrypoint(ctx: JobContext):
     participant = await ctx.wait_for_participant()
     tenant = get_tenant_from_db(participant.identity)
 
-    # 2. Initialize VAD (Robust Loading)
+    # 2. Initialize VAD (Safe Load)
     try:
         vad = silero.VAD.load()
     except:
@@ -127,11 +132,11 @@ async def entrypoint(ctx: JobContext):
             agent.start(ctx.room, participant=participant)
             await agent.say(f"Hello {tenant['name']}, I am online. How can I help?", allow_interruptions=True)
 
-            # Keep the agent alive while the room is connected
-            while ctx.room.connection_state.name == 'CONNECTED':
+            # --- FIXED KEEP-ALIVE LOOP ---
+            # We compare against the Enum, not the .name string
+            while ctx.room.connection_state == rtc.ConnectionState.CONNECTED:
                 await asyncio.sleep(1)
 
 
 if __name__ == "__main__":
-    # No CPU hacks needed on Linux/Codespaces!
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
