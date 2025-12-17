@@ -24,7 +24,6 @@ from calendar_service import CalendarService
 load_dotenv()
 logger = logging.getLogger("voice-agent")
 
-
 # --- DATABASE HELPER ---
 def get_tenant_from_db(user_identity):
     if not os.path.exists("maintenance.db"):
@@ -44,7 +43,6 @@ def get_tenant_from_db(user_identity):
         pass
     return {"name": "Valued Tenant", "unit_number": "Unknown"}
 
-
 # --- TOOL CONTEXT ---
 class DispatcherTools(llm.FunctionContext):
     def __init__(self, tenant_info, mcp_session):
@@ -61,10 +59,10 @@ class DispatcherTools(llm.FunctionContext):
             cursor = conn.cursor()
 
             query = """
-                SELECT 
-                    a.asset_name, 
-                    a.brand, 
-                    a.serial_number, 
+                SELECT
+                    a.asset_name,
+                    a.brand,
+                    a.serial_number,
                     a.warranty_expires,
                     v.contact_email as vendor_email
                 FROM assets a
@@ -106,7 +104,6 @@ class DispatcherTools(llm.FunctionContext):
         cal = CalendarService()
         return cal.book_slot(date, time, task)
 
-
 # --- ENTRYPOINT ---
 async def entrypoint(ctx: JobContext):
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
@@ -114,10 +111,8 @@ async def entrypoint(ctx: JobContext):
     tenant = get_tenant_from_db(participant.identity)
 
     # VAD Load
-    try:
-        vad = silero.VAD.load()
-    except:
-        vad = silero.VAD()
+    try: vad = silero.VAD.load()
+    except: vad = silero.VAD()
 
     # MCP Connection
     server_params = StdioServerParameters(command=sys.executable, args=["mcp_server.py"], env=None)
@@ -144,32 +139,26 @@ async def entrypoint(ctx: JobContext):
                         You are the Smart Building Dispatcher for Unit {tenant['unit_number']} ({tenant['name']}).
                         Today's Date: {today_str}.
 
-                        **CORE BEHAVIOR: INTELLIGENT MATCHING**
-                        1. When the user mentions an issue, call `get_unit_assets` immediately to see what they own.
-                        2. **DO NOT play dumb.** If the user uses slang, a generic term, or a slightly wrong name (e.g., "Washer" for "Dishwasher", "Cooler" for "Fridge"), use your intelligence to pick the most logical match from their asset list. 
-                        3. Only ask for clarification if there are two truly conflicting options (e.g., they say "Washer" and they own BOTH a Dishwasher and a Washing Machine). Otherwise, assume the match and proceed.
+                        **MISSION: AUTONOMOUS EXECUTION**
+                        You are a "Fire-and-Forget" agent. When the user reports an issue, you must perform the ENTIRE resolution workflow (Match -> Check -> Book -> Email) WITHOUT asking for confirmation or pausing.
 
-                        **EXECUTION WORKFLOW (Auto-Execute)**
-                        Once the asset is identified, check the `expires` date against Today ({today_str}).
+                        **PROTOCOL (DO NOT SPEAK UNTIL STEP 4 IS DONE):**
 
-                        **IF ACTIVE (Future Date):**
-                        1. Say: "Your [Brand] [Asset] is under warranty until [Date]. I am notifying the manufacturer."
-                        2. Call `send_email`.
-                           - Recipient: Use the `vendor_email` from the data.
-                           - Subject: "Warranty Claim: [Serial]"
-                           - Body: Write a professional email stating the Tenant Name, Unit, Asset, Serial, and report the issue.
+                        1. **MATCH:** Call `get_unit_assets`. Use fuzzy logic to find the best match (e.g., "Washer" -> "Dishwasher").
+                        2. **DECIDE:** Check `warranty_expires` vs Today ({today_str}).
+                        3. **EXECUTE:**
+                           - **IF ACTIVE:** Directly call `send_email` to the `vendor_email`.
+                           - **IF EXPIRED:**
+                               a. Call `check_calendar` for tomorrow.
+                               b. Call `book_slot` for the first available time.
+                               c. Call `send_email` to 'maintenance@building.com'.
+                        4. **REPORT:** ONLY AFTER the email is sent, speak to the user.
+                           - Say: "I found your [Brand] [Asset]. The warranty is [Active/Expired]. I have [Emailed Manufacturer / Booked Handyman for Time] and sent the confirmation. You are all set."
 
-                        **IF EXPIRED (Past Date):**
-                        1. Say: "Your warranty expired on [Date]. I am booking the internal handyman."
-                        2. Call `check_calendar` for tomorrow.
-                        3. Pick the first available slot.
-                        4. Call `book_slot`.
-                        5. Call `send_email`.
-                           - Recipient: 'maintenance@building.com'
-                           - Subject: "Work Order: [Serial] - [Asset]"
-                           - Body: Write a detailed work order including Tenant details, Asset details, Serial Number, and the booked appointment time.
-
-                        **FINAL RULE:** Be efficient. Do not ask for permission to send emails or book slots. Just solve the problem.
+                        **RESTRICTIONS:**
+                        - Do not say "I will look that up." Just do it.
+                        - Do not say "Should I book it?" Just book it.
+                        - Do not say "I found a washer, is that correct?" Assume it is correct and proceed.
                     """
                 )
             )
@@ -179,7 +168,6 @@ async def entrypoint(ctx: JobContext):
 
             while ctx.room.connection_state == rtc.ConnectionState.CONNECTED:
                 await asyncio.sleep(1)
-
 
 if __name__ == "__main__":
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
