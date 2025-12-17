@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli, llm
 from livekit.agents.pipeline import VoicePipelineAgent
 from livekit.plugins import openai, silero
-from livekit import rtc  # <--- IMPORTING THIS FIXES THE CRASH
+from livekit import rtc
 
 # MCP IMPORTS
 from mcp import ClientSession, StdioServerParameters
@@ -25,9 +25,8 @@ logger = logging.getLogger("voice-agent")
 
 # --- DATABASE HELPER ---
 def get_tenant_from_db(user_identity):
-    # Check if DB exists
     if not os.path.exists("maintenance.db"):
-        print("⚠️ ERROR: maintenance.db not found in current directory!")
+        print("⚠️ ERROR: maintenance.db not found! Did you upload it?")
         return {"name": "Unknown", "unit_number": "Unknown"}
 
     target_id = "U205"
@@ -91,14 +90,13 @@ async def entrypoint(ctx: JobContext):
     participant = await ctx.wait_for_participant()
     tenant = get_tenant_from_db(participant.identity)
 
-    # 2. Initialize VAD (Safe Load)
+    # 2. Initialize VAD
     try:
         vad = silero.VAD.load()
     except:
         vad = silero.VAD()
 
     # 3. Start MCP Client & Agent
-    # We wrap the whole agent execution inside the MCP connection block
     server_params = StdioServerParameters(command=sys.executable, args=["mcp_server.py"], env=None)
 
     print(f"🔌 Connecting to MCP Server for Unit {tenant['unit_number']}...")
@@ -132,10 +130,10 @@ async def entrypoint(ctx: JobContext):
             agent.start(ctx.room, participant=participant)
             await agent.say(f"Hello {tenant['name']}, I am online. How can I help?", allow_interruptions=True)
 
-            # --- FIXED KEEP-ALIVE LOOP ---
-            # We compare against the Enum, not the .name string
-            while ctx.room.connection_state == rtc.ConnectionState.CONNECTED:
-                await asyncio.sleep(1)
+            # --- ROBUST WAIT FOREVER ---
+            # This keeps the script running until the room is closed by the user/server
+            # It replaces the buggy 'while loop' that caused the crash.
+            await asyncio.Event().wait()
 
 
 if __name__ == "__main__":
