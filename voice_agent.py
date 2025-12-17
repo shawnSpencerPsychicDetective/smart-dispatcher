@@ -38,58 +38,92 @@ def get_tenant_from_db(user_identity):
     return {"name": "Valued Tenant", "unit_number": "Unknown"}
 
 
-# --- TOOL CONTEXT ---
+# --- THE TOOLS (GRANULAR BUT POWERFUL) ---
 class DispatcherTools(llm.FunctionContext):
     def __init__(self, tenant_info, mcp_session):
         super().__init__()
         self.tenant = tenant_info
         self.mcp = mcp_session
 
-    @llm.ai_callable(description="Get ALL assets for this unit")
-    async def get_unit_assets(self):
-        print(f"\n[TOOL CALLED] get_unit_assets for Unit {self.tenant['unit_number']}")
-        try:
-            conn = sqlite3.connect("maintenance.db")
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            query = """
-                SELECT a.asset_name, a.brand, a.serial_number, a.warranty_expires,
-                       v.contact_email as vendor_email
-                FROM assets a
-                LEFT JOIN vendors v ON a.brand = v.brand_affiliation
-                WHERE a.unit_number = ?
-            """
-            cursor.execute(query, (self.tenant['unit_number'],))
-            rows = cursor.fetchall()
-            conn.close()
-            results = [{
-                "asset": r["asset_name"], "brand": r["brand"], "serial": r["serial_number"],
-                "expires": r["warranty_expires"], "vendor_email": r["vendor_email"] or "maintenance@building.com"
-            } for r in rows]
-            return json.dumps(results)
-        except Exception as e:
-            return f"Error: {str(e)}"
+    @llm.ai_callable(
+        description="Look up asset details, warranty status, and vendor email. Handles fuzzy matching (e.g. 'washer' -> 'dishwasher').")
+    async def lookup_asset_metadata(self, item_name: str):
+        print(f"\n[TOOL] Looking up metadata for: {item_name}")
 
-    @llm.ai_callable(description="Send dispatch email. RETURNS 'Success' or 'Error'.")
-    def send_email(self, recipient: str, subject: str, body: str):
-        print(f"\n[TOOL CALLED] send_email to {recipient}")  # <--- DEBUG PRINT
+        # 1. FETCH RAW DATA
+        conn = sqlite3.connect("maintenance.db")
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        query = """
+            SELECT a.asset_name, a.brand, a.serial_number, a.warranty_expires,
+                   v.contact_email as vendor_email
+            FROM assets a
+            LEFT JOIN vendors v ON a.brand = v.brand_affiliation
+            WHERE a.unit_number = ?
+        """
+        cursor.execute(query, (self.tenant['unit_number'],))
+        rows = cursor.fetchall()
+        conn.close()
+
+        # 2. FUZZY MATCHING LOGIC (Python Helper)
+        matched_row = None
+        item_lower = item_name.lower()
+        # Common slang map to help the search
+        slang = {"washer": "dishwasher", "dryer": "washing", "fridge": "refrigerator", "ac": "conditioner"}
+        search_term = slang.get(item_lower, item_lower)
+
+        for row in rows:
+            if search_term in row["asset_name"].lower():
+                matched_row = row
+                break
+
+        if not matched_row:
+            return "Asset not found in unit."
+
+        # 3. CALCULATE STATUS
+        today = datetime.now().date()
+        expires = datetime.strptime(matched_row["warranty_expires"], "%Y-%m-%d").date()
+        status = "ACTIVE" if expires >= today else "EXPIRED"
+
+        # Return structured data so the LLM can MAKE THE DECISION
+        return json.dumps({
+            "asset": matched_row["asset_name"],
+            "brand": matched_row["brand"],
+            "serial": matched_row["serial_number"],
+            "status": status,
+            "expiry_date": matched_row["warranty_expires"],
+            "vendor_email": matched_row["vendor_email"] or "maintenance@building.com"
+        })
+
+    @llm.ai_callable(description="For ACTIVE warranties: Send email to manufacturer.")
+    def process_warranty_claim(self, recipient_email: str, brand: str, asset: str, serial: str):
+        print(f"\n[TOOL] Processing Manufacturer Claim...")
         email = EmailDispatcher()
-        # Ensure we connect to localhost (which maps to 0.0.0.0 in codespaces)
-        result = email.send_email(subject, body, recipient)
-        print(f"[TOOL RESULT] {result}")
+        subject = f"Warranty Claim: {serial}"
+        body = f"Tenant: {self.tenant['name']}\nUnit: {self.tenant['unit_number']}\nAsset: {brand} {asset}\nIssue: Tenant reported defect."
+
+        result = email.send_email(subject, body, recipient_email)
         return result
 
-    @llm.ai_callable(description="Check calendar availability")
-    def check_calendar(self, date: str):
-        print(f"\n[TOOL CALLED] check_calendar for {date}")
-        cal = CalendarService()
-        return f"Available slots: {cal.check_availability(date)}"
+    @llm.ai_callable(description="For EXPIRED warranties: Book internal handyman and notify maintenance.")
+    def schedule_internal_repair(self, asset: str, serial: str):
+        print(f"\n[TOOL] Scheduling Internal Repair...")
 
-    @llm.ai_callable(description="Book a time slot")
-    def book_slot(self, date: str, time: str, task: str):
-        print(f"\n[TOOL CALLED] book_slot for {time}")
+        # 1. Calendar Logic
         cal = CalendarService()
-        return cal.book_slot(date, time, task)
+        avail = cal.check_availability("tomorrow")
+        slot = avail.split(",")[0].strip() if "," in avail else "09:00"
+
+        # 2. Book
+        cal.book_slot("tomorrow", slot, f"Fix {asset}")
+
+        # 3. Email
+        email = EmailDispatcher()
+        subject = f"Work Order: {serial}"
+        body = f"Tenant: {self.tenant['name']}\nAsset: {asset}\nStatus: Out of Warranty\nAction: Booked for tomorrow at {slot}"
+
+        result = email.send_email(subject, body, "maintenance@building.com")
+        return f"Booked for {slot} tomorrow. {result}"
 
 
 # --- ENTRYPOINT ---
@@ -112,7 +146,6 @@ async def entrypoint(ctx: JobContext):
             print("✅ MCP Connected.")
 
             tools = DispatcherTools(tenant, session)
-            today_str = datetime.now().strftime("%Y-%m-%d")
 
             agent = VoicePipelineAgent(
                 vad=vad,
@@ -123,30 +156,22 @@ async def entrypoint(ctx: JobContext):
                 chat_ctx=llm.ChatContext().append(
                     role="system",
                     text=f"""
-                        You are the Smart Dispatcher for {tenant['name']} (Unit {tenant['unit_number']}).
-                        Today: {today_str}.
+                        You are the Smart Dispatcher. Tenant: {tenant['name']} (Unit {tenant['unit_number']}).
 
-                        **RULES OF ENGAGEMENT:**
-                        1. You CANNOT send emails or book slots yourself. You MUST call the tools.
-                        2. If you say "I have emailed," but you didn't call the `send_email` tool, you are failing.
-                        3. Execute the full chain of tools BEFORE speaking the final confirmation.
+                        **PROTOCOL: ONE-SHOT EXECUTION**
+                        Do not have a conversation. Resolve the issue immediately.
 
-                        **WORKFLOW:**
-                        1. User reports issue -> Call `get_unit_assets`.
-                        2. Match User Term (e.g. "Washer") to DB Asset (e.g. "Dishwasher").
-                        3. Check Warranty Date vs Today.
+                        **STEP 1: IDENTIFY**
+                        Call `lookup_asset_metadata` with the user's term (e.g. "washer").
 
-                        **IF ACTIVE:**
-                        -> Call `send_email` (Recipient: vendor_email).
-                        -> Wait for tool result.
-                        -> Say: "I found your [Asset]. Warranty is active. I have notified the manufacturer."
+                        **STEP 2: DECIDE (Internal Thought)**
+                        Read the JSON result.
+                        - Is "status" == "ACTIVE"? -> Call `process_warranty_claim`.
+                        - Is "status" == "EXPIRED"? -> Call `schedule_internal_repair`.
 
-                        **IF EXPIRED:**
-                        -> Call `check_calendar`.
-                        -> Call `book_slot`.
-                        -> Call `send_email` (Recipient: maintenance@building.com).
-                        -> Wait for tool result.
-                        -> Say: "Warranty expired. I booked the handyman for [Time] and sent the work order."
+                        **STEP 3: REPORT**
+                        Speak ONLY after the tools have returned "Success".
+                        "I found your [Brand] [Asset]. The warranty is [Active/Expired]. I have [notified the manufacturer / booked the handyman] and sent the confirmation email."
                     """
                 )
             )
