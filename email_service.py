@@ -1,65 +1,27 @@
-# email_service.py
 import smtplib
-import sqlite3
-from email.message import EmailMessage
-from faker import Faker
-
-fake = Faker()
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 
 class EmailDispatcher:
-    def __init__(self, db_path='maintenance.db', smtp_host='localhost', smtp_port=1025):
-        self.db_path = db_path
-        self.smtp_host = smtp_host
-        self.smtp_port = smtp_port
+    def send_email(self, subject, body, recipient):
+        sender_email = "dispatch@smartbuilding.com"
 
-    def generate_fake_recipient(self):
-        return fake.email()
-
-    def log_email(self, recipient, subject, body, status="DRAFT"):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO email_logs (recipient_email, subject, body, status)
-            VALUES (?, ?, ?, ?)
-        ''', (recipient, subject, body, status))
-        conn.commit()
-        log_id = cursor.lastrowid
-        conn.close()
-        return log_id
-
-    def update_status(self, log_id, new_status):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('UPDATE email_logs SET status = ? WHERE id = ?', (new_status, log_id))
-        conn.commit()
-        conn.close()
-
-    def send_email(self, subject, body, recipient_email=None):
-        # If no recipient is passed, make one up
-        if not recipient_email:
-            recipient_email = self.generate_fake_recipient()
-
-        print(f"📧 Preparing email for: {recipient_email}")
-
-        # 1. Log Draft
-        log_id = self.log_email(recipient_email, subject, body, "DRAFT")
-
-        # 2. Build Message
-        msg = EmailMessage()
-        msg.set_content(body)
+        # Create a standard email object
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = recipient
         msg['Subject'] = subject
-        msg['From'] = "agent@maintenance-system.internal"
-        msg['To'] = recipient_email
+        msg.attach(MIMEText(body, 'plain'))
 
-        # 3. Send to Local Mock Server
         try:
-            with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
+            # Connect to our local Mock SMTP Server (Part 1)
+            # Note: We use port 1025, not the standard 25/587
+            with smtplib.SMTP('localhost', 1025) as server:
                 server.send_message(msg)
 
-            self.update_status(log_id, "SENT")
-            return f"✅ Email sent to {recipient_email} (Log ID: {log_id})"
-
+            return f"✅ Email successfully dispatched to {recipient} via Mock Server."
         except ConnectionRefusedError:
-            self.update_status(log_id, "FAILED")
-            return "❌ Connection Refused: Is the mock server running?"
+            return "❌ Error: Mock SMTP Server is not running. Run 'python mock_smtp.py' in a separate terminal."
+        except Exception as e:
+            return f"❌ Error sending email: {str(e)}"

@@ -3,6 +3,8 @@ import logging
 import sys
 import os
 import sqlite3
+import json
+from datetime import datetime
 from dotenv import load_dotenv
 
 # LIVEKIT IMPORTS
@@ -26,7 +28,6 @@ logger = logging.getLogger("voice-agent")
 # --- DATABASE HELPER ---
 def get_tenant_from_db(user_identity):
     if not os.path.exists("maintenance.db"):
-        print("⚠️ ERROR: maintenance.db not found! Did you upload it?")
         return {"name": "Unknown", "unit_number": "Unknown"}
 
     target_id = "U205"
@@ -38,8 +39,7 @@ def get_tenant_from_db(user_identity):
         conn.close()
         if row:
             return {"name": row[0], "unit_number": row[1]}
-    except Exception as e:
-        print(f"⚠️ DB Read Error: {e}")
+    except:
         pass
     return {"name": "Valued Tenant", "unit_number": "Unknown"}
 
@@ -51,33 +51,59 @@ class DispatcherTools(llm.FunctionContext):
         self.tenant = tenant_info
         self.mcp = mcp_session
 
-    @llm.ai_callable(description="Check warranty status of an appliance via MCP")
-    async def check_warranty(self, appliance_name: str):
-        logger.info(f"⚡ Bridging to MCP: Checking warranty for {appliance_name}")
+    @llm.ai_callable(description="Get ALL assets for this unit, including WARRANTY and VENDOR EMAIL.")
+    async def get_unit_assets(self):
+        logger.info(f"⚡ Fetching assets + vendors for Unit {self.tenant['unit_number']}")
         try:
-            # 1. Get Assets
-            assets_result = await self.mcp.call_tool("get_assets", arguments={})
+            # We bypass MCP 'get_assets' generic call to do a specific JOIN here for speed & accuracy.
+            # (In a strict MCP architecture, you'd add a new MCP tool 'get_asset_details', but this works for the demo)
+            conn = sqlite3.connect("maintenance.db")
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
 
-            # 2. Check Warranty
-            result = await self.mcp.call_tool("check_warranty_status", arguments={
-                "asset_name": appliance_name,
-                "unit_number": self.tenant['unit_number']
-            })
-            return result.content[0].text
+            # THE CRITICAL JOIN QUERY
+            query = """
+                SELECT 
+                    a.asset_name, 
+                    a.brand, 
+                    a.serial_number, 
+                    a.warranty_expires,
+                    v.contact_email as vendor_email
+                FROM assets a
+                LEFT JOIN vendors v ON a.brand = v.brand_affiliation
+                WHERE a.unit_number = ?
+            """
+            cursor.execute(query, (self.tenant['unit_number'],))
+            rows = cursor.fetchall()
+            conn.close()
+
+            # Convert to list of dicts
+            results = []
+            for row in rows:
+                results.append({
+                    "asset": row["asset_name"],
+                    "brand": row["brand"],
+                    "serial": row["serial_number"],
+                    "expires": row["warranty_expires"],
+                    "vendor_email": row["vendor_email"] or "maintenance@building.com"  # Fallback if brand mismatch
+                })
+
+            return json.dumps(results)
+
         except Exception as e:
-            return f"Error connecting to database via MCP: {str(e)}"
+            return f"Error retrieving assets: {str(e)}"
 
-    @llm.ai_callable(description="Send dispatch email")
+    @llm.ai_callable(description="Send dispatch email to Manufacturer or Handyman")
     def send_email(self, recipient: str, subject: str, body: str):
         email = EmailDispatcher()
         return email.send_email(subject, body, recipient)
 
-    @llm.ai_callable(description="Check calendar availability")
+    @llm.ai_callable(description="Check calendar availability for the Internal Handyman")
     def check_calendar(self, date: str):
         cal = CalendarService()
         return f"Available slots: {cal.check_availability(date)}"
 
-    @llm.ai_callable(description="Book a time slot")
+    @llm.ai_callable(description="Book a time slot with the Internal Handyman")
     def book_slot(self, date: str, time: str, task: str):
         cal = CalendarService()
         return cal.book_slot(date, time, task)
@@ -85,18 +111,17 @@ class DispatcherTools(llm.FunctionContext):
 
 # --- ENTRYPOINT ---
 async def entrypoint(ctx: JobContext):
-    # 1. Connect
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     participant = await ctx.wait_for_participant()
     tenant = get_tenant_from_db(participant.identity)
 
-    # 2. Initialize VAD
+    # VAD Load
     try:
         vad = silero.VAD.load()
     except:
         vad = silero.VAD()
 
-    # 3. Start MCP Client & Agent
+    # MCP Connection (Still connected for future proofing)
     server_params = StdioServerParameters(command=sys.executable, args=["mcp_server.py"], env=None)
 
     print(f"🔌 Connecting to MCP Server for Unit {tenant['unit_number']}...")
@@ -108,6 +133,8 @@ async def entrypoint(ctx: JobContext):
 
             tools = DispatcherTools(tenant, session)
 
+            today_str = datetime.now().strftime("%Y-%m-%d")
+
             agent = VoicePipelineAgent(
                 vad=vad,
                 stt=openai.STT(),
@@ -118,11 +145,32 @@ async def entrypoint(ctx: JobContext):
                     role="system",
                     text=f"""
                         You are the Smart Building Dispatcher for Unit {tenant['unit_number']} ({tenant['name']}).
-                        PROTOCOL:
-                        1. You have direct access to the asset database via MCP.
-                        2. When the user mentions an appliance, IMMEDIATELY call `check_warranty`.
-                        3. Based on the result (Active/Expired), Email Manufacturer or Book Handyman.
-                        4. Do not ask for details you can look up.
+                        Today's Date: {today_str}.
+
+                        **CRITICAL PROTOCOL:**
+                        1. When the user mentions a problem, call `get_unit_assets` immediately.
+                        2. Look at the list. Fuzzy match the user's word (e.g., "fridge") to the `asset` name (e.g., "Refrigerator").
+
+                        **DECISION LOGIC (Follow Exactly):**
+                        Compare `expires` date with Today ({today_str}).
+
+                        **IF ACTIVE (Future Date):**
+                        - Say: "Your [Brand] [Asset] is under warranty until [Date]."
+                        - Action: Call `send_email`.
+                        - **RECIPIENT:** Use the exact `vendor_email` from the tool data. DO NOT GUESS.
+                        - Subject: "Warranty Claim: [Serial]"
+                        - Body: "Tenant: {tenant['name']}. Issue: User Report."
+
+                        **IF EXPIRED (Past Date):**
+                        - Say: "Your warranty expired on [Date]. I will book the internal handyman."
+                        - Step 1: Call `check_calendar` for tomorrow.
+                        - Step 2: Pick first available slot.
+                        - Step 3: Call `book_slot`.
+                        - Step 4: Call `send_email` to 'maintenance@building.com'.
+                        - Subject: "Work Order: [Serial]"
+                        - Body: "Expired asset. Booked for [Time]."
+
+                        **Be efficient. Do not explain the process, just confirm the action.**
                     """
                 )
             )
@@ -130,10 +178,8 @@ async def entrypoint(ctx: JobContext):
             agent.start(ctx.room, participant=participant)
             await agent.say(f"Hello {tenant['name']}, I am online. How can I help?", allow_interruptions=True)
 
-            # --- ROBUST WAIT FOREVER ---
-            # This keeps the script running until the room is closed by the user/server
-            # It replaces the buggy 'while loop' that caused the crash.
-            await asyncio.Event().wait()
+            while ctx.room.connection_state == rtc.ConnectionState.CONNECTED:
+                await asyncio.sleep(1)
 
 
 if __name__ == "__main__":
