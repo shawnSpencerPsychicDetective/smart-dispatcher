@@ -17,7 +17,6 @@ logger = logging.getLogger("voice-agent")
 
 
 # --- CLIENT TOOL WRAPPER ---
-# This class simply bridges the Voice Agent's request to the MCP Client
 class DispatcherClient(llm.FunctionContext):
     def __init__(self, mcp_session):
         super().__init__()
@@ -26,9 +25,7 @@ class DispatcherClient(llm.FunctionContext):
     @llm.ai_callable(description="Execute maintenance for a specific asset using its SERIAL NUMBER.")
     async def execute_request(self, serial_number: str):
         print(f"⚡ [AGENT] Calling MCP Tool 'execute_maintenance' with {serial_number}")
-        # Call the server
         result = await self.mcp.call_tool("execute_maintenance", arguments={"serial_number": serial_number})
-        # Return the server's response directly to the LLM
         return result.content[0].text
 
 
@@ -37,7 +34,6 @@ async def entrypoint(ctx: JobContext):
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     participant = await ctx.wait_for_participant()
 
-    # Identify Tenant (Hardcoded for demo, but passed to prompt)
     tenant_name = "Charlie"
     unit_number = "205"
 
@@ -55,8 +51,7 @@ async def entrypoint(ctx: JobContext):
             await session.initialize()
             print("✅ MCP Connected.")
 
-            # 1. FETCH CONTEXT VIA MCP (The "True" Way)
-            # We ask the server: "What does this user own?"
+            # 1. FETCH CONTEXT
             print("📋 Fetching Context from Server...")
             context_result = await session.call_tool("get_tenant_context", arguments={"unit_number": unit_number})
             asset_context_string = context_result.content[0].text
@@ -88,7 +83,10 @@ async def entrypoint(ctx: JobContext):
             )
             agent.start(ctx.room, participant=participant)
             await agent.say(f"Hello {tenant_name}, I am online.", allow_interruptions=True)
-            while ctx.room.connection_state == rtc.ConnectionState.CONNECTED:
+
+            # --- FIX IS HERE ---
+            # Use CONN_CONNECTED instead of CONNECTED
+            while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
                 await asyncio.sleep(1)
 
 
