@@ -4,7 +4,7 @@ import sys
 import os
 import sqlite3
 import json
-import smtplib  # Import directly
+import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
@@ -40,9 +40,9 @@ def get_tenant_from_db(user_identity):
     return {"name": "Valued Tenant", "unit_number": "Unknown"}
 
 
-# --- DIRECT SMTP HELPER (No External File) ---
+# --- DIRECT SMTP HELPER ---
 def internal_send_email(recipient, subject, body):
-    print(f"⚡ [INTERNAL] Attempting to connect to localhost:1025...")
+    print(f"⚡ [INTERNAL] Connecting to SMTP...")
     msg = MIMEMultipart()
     msg['From'] = "dispatch@smartbuilding.com"
     msg['To'] = recipient
@@ -50,13 +50,14 @@ def internal_send_email(recipient, subject, body):
     msg.attach(MIMEText(body, 'plain'))
 
     try:
+        # Port 1025 for Mock Server
         with smtplib.SMTP('localhost', 1025) as server:
             server.send_message(msg)
         print(f"✅ [INTERNAL] Email SENT to {recipient}")
-        return "SUCCESS: Email sent."
+        return "SUCCESS"
     except Exception as e:
-        print(f"❌ [INTERNAL] Connection Failed: {e}")
-        return f"ERROR: Could not connect to SMTP server. {e}"
+        print(f"❌ [INTERNAL] Failed: {e}")
+        return f"ERROR: SMTP Connection Failed. {e}"
 
 
 # --- TOOLS ---
@@ -66,10 +67,9 @@ class DispatcherTools(llm.FunctionContext):
         self.tenant = tenant_info
         self.mcp = mcp_session
 
-    @llm.ai_callable(description="Lookup asset. Returns JSON with status 'ACTIVE' or 'EXPIRED'.")
+    @llm.ai_callable(description="Lookup asset metadata. Returns JSON.")
     async def lookup_asset_metadata(self, item_name: str):
-        print(f"\n🔎 [TOOL CALL] lookup_asset_metadata('{item_name}')")
-
+        print(f"\n🔎 [TOOL] Searching for '{item_name}'...")
         conn = sqlite3.connect("maintenance.db")
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
@@ -94,15 +94,13 @@ class DispatcherTools(llm.FunctionContext):
                 matched_row = row
                 break
 
-        if not matched_row:
-            print("❌ [TOOL RESULT] Asset not found")
-            return "Asset not found."
+        if not matched_row: return "Asset not found."
 
         today = datetime.now().date()
         expires = datetime.strptime(matched_row["warranty_expires"], "%Y-%m-%d").date()
         status = "ACTIVE" if expires >= today else "EXPIRED"
 
-        result = json.dumps({
+        return json.dumps({
             "asset": matched_row["asset_name"],
             "brand": matched_row["brand"],
             "serial": matched_row["serial_number"],
@@ -110,18 +108,16 @@ class DispatcherTools(llm.FunctionContext):
             "expiry_date": matched_row["warranty_expires"],
             "vendor_email": matched_row["vendor_email"] or "maintenance@building.com"
         })
-        print(f"✅ [TOOL RESULT] Found: {matched_row['asset_name']} ({status})")
-        return result
 
-    @llm.ai_callable(description="Send email to manufacturer.")
+    @llm.ai_callable(description="Send email to manufacturer. Returns SUCCESS or ERROR.")
     def process_warranty_claim(self, recipient_email: str, brand: str, asset: str, serial: str):
-        print(f"\n📧 [TOOL CALL] process_warranty_claim -> {recipient_email}")
-        body = f"Tenant: {self.tenant['name']}\nAsset: {brand} {asset} ({serial})\nIssue: Warranty Claim Request."
+        print(f"\n📧 [TOOL] Sending Warranty Claim...")
+        body = f"Tenant: {self.tenant['name']}\nAsset: {brand} {asset} ({serial})\nIssue: User Reported."
         return internal_send_email(recipient_email, f"Warranty Claim: {serial}", body)
 
-    @llm.ai_callable(description="Book handyman AND email maintenance.")
+    @llm.ai_callable(description="Book handyman AND email maintenance. Returns SUCCESS or ERROR.")
     def schedule_internal_repair(self, asset: str, serial: str):
-        print(f"\n🛠️ [TOOL CALL] schedule_internal_repair -> {asset}")
+        print(f"\n🛠️ [TOOL] Booking Handyman...")
         cal = CalendarService()
         avail = cal.check_availability("tomorrow")
         slot = avail.split(",")[0].strip() if "," in avail else "09:00"
@@ -159,18 +155,24 @@ async def entrypoint(ctx: JobContext):
                 chat_ctx=llm.ChatContext().append(
                     role="system",
                     text=f"""
-                        You are the Smart Dispatcher. Tenant: {tenant['name']} (Unit {tenant['unit_number']}).
+                        You are an Autonomous Dispatch System. Tenant: {tenant['name']}.
 
-                        **STRICT TOOL USAGE RULES:**
-                        1. You are PROHIBITED from saying "I have sent the email" unless you have successfully called `process_warranty_claim` or `schedule_internal_repair`.
-                        2. If the tool returns an error (e.g. "Connection Failed"), you MUST report that error to the user.
+                        **FATAL ERROR CONDITION:**
+                        If you speak phrases like "I will now..." or "Let me check...", you have FAILED.
+                        You must be SILENT while tools are running.
 
-                        **EXECUTION PATH:**
-                        1. User speaks -> Call `lookup_asset_metadata`.
+                        **EXECUTION LOOP (ATOMIC):**
+                        1. User Request -> Call `lookup_asset_metadata` IMMEDIATELY.
                         2. Read JSON. 
-                           - IF ACTIVE -> Call `process_warranty_claim`.
-                           - IF EXPIRED -> Call `schedule_internal_repair`.
-                        3. ONLY speak after the tool returns "SUCCESS".
+                           - IF "ACTIVE" -> Call `process_warranty_claim`.
+                           - IF "EXPIRED" -> Call `schedule_internal_repair`.
+                        3. WAIT for the tool to return "SUCCESS".
+                        4. ONLY THEN, speak: "Done. I have [action taken]."
+
+                        **EXAMPLE:**
+                        User: "Fix washer."
+                        Agent (Internal): calls lookup... calls schedule... receives "SUCCESS"
+                        Agent (Voice): "I found your expired Dishwasher. I booked the handyman for 9 AM and sent the email."
                     """
                 )
             )
