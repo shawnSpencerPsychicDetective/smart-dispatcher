@@ -1,93 +1,121 @@
 from mcp.server.fastmcp import FastMCP
 import sqlite3
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime
+import os
 
 # Initialize the MCP Server
-mcp = FastMCP("Smart Dispatcher Asset Server")
-
-DB_PATH = "maintenance.db"
+mcp = FastMCP("SmartBuildingDispatcher")
 
 
+# --- HELPER: EMAIL (Now lives on the Server) ---
+def internal_send_email(recipient, subject, body):
+    print(f"⚡ [MCP SERVER] Sending email to {recipient}...")
+    msg = MIMEMultipart()
+    msg['From'] = "dispatch@smartbuilding.com"
+    msg['To'] = recipient
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+
+    try:
+        # Port 1025 for Mock Server
+        with smtplib.SMTP('localhost', 1025) as server:
+            server.send_message(msg)
+        print(f"✅ [MCP SERVER] Email SENT.")
+        return True
+    except Exception as e:
+        print(f"❌ [MCP SERVER] Email Failed: {e}")
+        return False
+
+
+# --- TOOL 1: CONTEXT LOADER ---
 @mcp.tool()
-def get_tenant_unit(tenant_name: str) -> str:
-    """Look up a tenant's unit number by their name."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT unit_number FROM tenants WHERE name = ?", (tenant_name,))
-    result = cursor.fetchone()
-    conn.close()
-    return result[0] if result else "Tenant not found"
-
-
-@mcp.tool()
-def get_unit_assets(unit_number: str) -> str:
-    """List all assets (appliances) inside a specific unit."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT asset_name, brand, warranty_expires FROM assets WHERE unit_number = ?", (unit_number,))
-    results = cursor.fetchall()
-    conn.close()
-    return str(results)
-
-
-@mcp.tool()
-def check_warranty_status(asset_name: str, unit_number: str) -> str:
+def get_tenant_context(unit_number: str) -> str:
     """
-    Check if a specific asset is under warranty.
-    RETURNS: Status, Serial Number, and the CORRECT Vendor Email to use.
+    Fetches all assets for a unit to load into the AI's System Prompt.
     """
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    # 1. Get Asset Details (Including Serial Number)
-    cursor.execute("""
-        SELECT brand, warranty_expires, serial_number FROM assets 
-        WHERE unit_number = ? AND asset_name LIKE ?
-    """, (unit_number, f"%{asset_name}%"))
-    asset = cursor.fetchone()
-
-    if not asset:
+    try:
+        conn = sqlite3.connect("maintenance.db")
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        query = """
+            SELECT a.asset_name, a.brand, a.serial_number, a.warranty_expires
+            FROM assets a
+            WHERE a.unit_number = ?
+        """
+        cursor.execute(query, (unit_number,))
+        rows = cursor.fetchall()
         conn.close()
-        return "Asset not found."
 
-    brand, expires_str, serial_number = asset
-    expiration_date = datetime.strptime(expires_str, "%Y-%m-%d")
-    is_active = expiration_date > datetime.now()
+        asset_list = []
+        for r in rows:
+            asset_list.append(
+                f"- {r['brand']} {r['asset_name']} (Serial: {r['serial_number']}, Expires: {r['warranty_expires']})")
 
-    # 2. Get Vendor Contact Logic (Strict Database Lookup)
-    target_email = ""
-    if is_active:
-        # Fetch Manufacturer Email
-        cursor.execute("SELECT contact_email FROM vendors WHERE brand_affiliation = ? AND is_internal_staff = 0",
-                       (brand,))
-    else:
-        # Fetch Internal Handyman Email
-        cursor.execute("SELECT contact_email FROM vendors WHERE is_internal_staff = 1")
+        if not asset_list:
+            return "No assets found."
+        return "\n".join(asset_list)
+    except Exception as e:
+        return f"Error loading context: {e}"
 
-    vendor_result = cursor.fetchone()
-    target_email = vendor_result[0] if vendor_result else "Error: Vendor Email Not Found in DB"
 
+# --- TOOL 2: THE EXECUTOR ---
+@mcp.tool()
+def execute_maintenance(serial_number: str) -> str:
+    """
+    Performs the full maintenance workflow: Checks warranty -> Sends Email.
+    Returns the confirmation message for the AI to speak.
+    """
+    print(f"\n[MCP SERVER] Executing Maintenance for Serial: {serial_number}")
+
+    # 1. FETCH DETAILS
+    conn = sqlite3.connect("maintenance.db")
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    # We join with Tenants table to get the Name for the email body
+    cursor.execute("""
+        SELECT a.asset_name, a.brand, a.warranty_expires, a.unit_number,
+               v.contact_email, t.name as tenant_name
+        FROM assets a
+        LEFT JOIN vendors v ON a.brand = v.brand_affiliation
+        LEFT JOIN tenants t ON a.unit_number = t.unit_number
+        WHERE a.serial_number = ?
+    """, (serial_number,))
+    row = cursor.fetchone()
     conn.close()
 
-    # 3. Return a detailed instruction block to the Agent
+    if not row:
+        return "System Error: Asset not found in database."
+
+    # 2. LOGIC
+    today = datetime.now().date()
+    expires = datetime.strptime(row["warranty_expires"], "%Y-%m-%d").date()
+    is_active = expires >= today
+
+    tenant_name = row["tenant_name"] or "Resident"
+
     if is_active:
-        return f"""
-        STATUS: WARRANTY ACTIVE
-        ASSET: {brand} {asset_name}
-        SERIAL_NUMBER: {serial_number}
-        EXPIRES: {expires_str}
-        ACTION: Dispatch to Manufacturer.
-        MANDATORY VENDOR EMAIL: {target_email}
-        """
+        # SCENARIO A: ACTIVE
+        recipient = row["contact_email"] or "warranty@generic.com"
+        subject = f"Warranty Claim: {serial_number}"
+        body = f"Tenant: {tenant_name}\nUnit: {row['unit_number']}\nAsset: {row['brand']} {row['asset_name']}\nIssue: Tenant reported defect."
+
+        internal_send_email(recipient, subject, body)
+        return f"I found your {row['brand']} {row['asset_name']}. The warranty is active. I have notified the manufacturer and sent the confirmation email."
+
     else:
-        return f"""
-        STATUS: WARRANTY EXPIRED
-        ASSET: {brand} {asset_name}
-        SERIAL_NUMBER: {serial_number}
-        EXPIRES: {expires_str}
-        ACTION: Dispatch Internal Handyman.
-        MANDATORY INTERNAL EMAIL: {target_email}
-        """
+        # SCENARIO B: EXPIRED
+        # (Simplified: We assume next day 9am for the demo to save lines)
+        slot = "09:00 AM Tomorrow"
+
+        recipient = "maintenance@building.com"
+        subject = f"Work Order: {serial_number}"
+        body = f"Tenant: {tenant_name}\nAsset: {row['asset_name']}\nStatus: Expired\nAction: Booked for {slot}."
+
+        internal_send_email(recipient, subject, body)
+        return f"Your {row['asset_name']} warranty is expired. I booked the handyman for {slot} and emailed the maintenance team."
 
 
 if __name__ == "__main__":
