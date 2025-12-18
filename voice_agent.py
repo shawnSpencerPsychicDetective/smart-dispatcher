@@ -40,9 +40,36 @@ def get_tenant_from_db(user_identity):
     return {"name": "Valued Tenant", "unit_number": "Unknown"}
 
 
+def fetch_all_assets_for_prompt(unit_number):
+    """
+    PRE-LOADS assets to inject into the System Prompt.
+    """
+    try:
+        conn = sqlite3.connect("maintenance.db")
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        query = """
+            SELECT a.asset_name, a.brand, a.serial_number, a.warranty_expires
+            FROM assets a
+            WHERE a.unit_number = ?
+        """
+        cursor.execute(query, (unit_number,))
+        rows = cursor.fetchall()
+        conn.close()
+
+        # Format as a clear string for the LLM
+        asset_list = []
+        for r in rows:
+            asset_list.append(
+                f"- {r['brand']} {r['asset_name']} (Serial: {r['serial_number']}, Expires: {r['warranty_expires']})")
+        return "\n".join(asset_list)
+    except:
+        return "No assets found."
+
+
 # --- DIRECT SMTP HELPER ---
 def internal_send_email(recipient, subject, body):
-    print(f"⚡ [INTERNAL] Connecting to SMTP...")
+    print(f"⚡ [INTERNAL] Sending email to {recipient}...")
     msg = MIMEMultipart()
     msg['From'] = "dispatch@smartbuilding.com"
     msg['To'] = recipient
@@ -50,83 +77,63 @@ def internal_send_email(recipient, subject, body):
     msg.attach(MIMEText(body, 'plain'))
 
     try:
-        # Port 1025 for Mock Server
         with smtplib.SMTP('localhost', 1025) as server:
             server.send_message(msg)
-        print(f"✅ [INTERNAL] Email SENT to {recipient}")
+        print(f"✅ [INTERNAL] Email SENT.")
         return "SUCCESS"
     except Exception as e:
         print(f"❌ [INTERNAL] Failed: {e}")
-        return f"ERROR: SMTP Connection Failed. {e}"
+        return f"ERROR: {e}"
 
 
-# --- TOOLS ---
+# --- EXECUTION TOOL ---
 class DispatcherTools(llm.FunctionContext):
     def __init__(self, tenant_info, mcp_session):
         super().__init__()
         self.tenant = tenant_info
         self.mcp = mcp_session
 
-    @llm.ai_callable(description="Lookup asset metadata. Returns JSON.")
-    async def lookup_asset_metadata(self, item_name: str):
-        print(f"\n🔎 [TOOL] Searching for '{item_name}'...")
+    @llm.ai_callable(description="Execute maintenance for a specific asset using its SERIAL NUMBER.")
+    async def execute_maintenance(self, serial_number: str):
+        """
+        The LLM provides the Serial Number (found in its context).
+        We just execute the logic.
+        """
+        print(f"\n[EXECUTION TOOL] Processing Serial: {serial_number}")
+
+        # 1. FETCH DETAILS
         conn = sqlite3.connect("maintenance.db")
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        query = """
-            SELECT a.asset_name, a.brand, a.serial_number, a.warranty_expires,
-                   v.contact_email as vendor_email
+        cursor.execute("""
+            SELECT a.asset_name, a.brand, a.warranty_expires, v.contact_email
             FROM assets a
             LEFT JOIN vendors v ON a.brand = v.brand_affiliation
-            WHERE a.unit_number = ?
-        """
-        cursor.execute(query, (self.tenant['unit_number'],))
-        rows = cursor.fetchall()
+            WHERE a.serial_number = ?
+        """, (serial_number,))
+        row = cursor.fetchone()
         conn.close()
 
-        item_lower = item_name.lower()
-        slang = {"washer": "dishwasher", "dryer": "washing", "fridge": "refrigerator", "ac": "conditioner"}
-        search_term = slang.get(item_lower, item_lower)
+        if not row: return "Error: Serial number not found."
 
-        matched_row = None
-        for row in rows:
-            if search_term in row["asset_name"].lower():
-                matched_row = row
-                break
-
-        if not matched_row: return "Asset not found."
-
+        # 2. LOGIC
         today = datetime.now().date()
-        expires = datetime.strptime(matched_row["warranty_expires"], "%Y-%m-%d").date()
-        status = "ACTIVE" if expires >= today else "EXPIRED"
+        expires = datetime.strptime(row["warranty_expires"], "%Y-%m-%d").date()
+        is_active = expires >= today
 
-        return json.dumps({
-            "asset": matched_row["asset_name"],
-            "brand": matched_row["brand"],
-            "serial": matched_row["serial_number"],
-            "status": status,
-            "expiry_date": matched_row["warranty_expires"],
-            "vendor_email": matched_row["vendor_email"] or "maintenance@building.com"
-        })
-
-    @llm.ai_callable(description="Send email to manufacturer. Returns SUCCESS or ERROR.")
-    def process_warranty_claim(self, recipient_email: str, brand: str, asset: str, serial: str):
-        print(f"\n📧 [TOOL] Sending Warranty Claim...")
-        body = f"Tenant: {self.tenant['name']}\nAsset: {brand} {asset} ({serial})\nIssue: User Reported."
-        return internal_send_email(recipient_email, f"Warranty Claim: {serial}", body)
-
-    @llm.ai_callable(description="Book handyman AND email maintenance. Returns SUCCESS or ERROR.")
-    def schedule_internal_repair(self, asset: str, serial: str):
-        print(f"\n🛠️ [TOOL] Booking Handyman...")
-        cal = CalendarService()
-        avail = cal.check_availability("tomorrow")
-        slot = avail.split(",")[0].strip() if "," in avail else "09:00"
-        cal.book_slot("tomorrow", slot, f"Fix {asset}")
-
-        body = f"Tenant: {self.tenant['name']}\nAsset: {asset} ({serial})\nStatus: Out of Warranty\nAction: Booked for {slot} tomorrow."
-        email_res = internal_send_email("maintenance@building.com", f"Work Order: {serial}", body)
-
-        return f"Booked for {slot}. Email Status: {email_res}"
+        if is_active:
+            recipient = row["contact_email"]
+            internal_send_email(recipient, f"Warranty Claim: {serial_number}",
+                                f"Tenant reported issue with {row['brand']} {row['asset_name']}.")
+            return f"I found your {row['brand']} {row['asset_name']}. The warranty is active. I have notified the manufacturer."
+        else:
+            cal = CalendarService()
+            avail = cal.check_availability("tomorrow")
+            slot = avail.split(",")[0].strip() if "," in avail else "09:00"
+            cal.book_slot("tomorrow", slot, f"Fix {row['asset_name']}")
+            internal_send_email("maintenance@building.com", f"Work Order: {serial_number}",
+                                f"Expired Asset. Booked for {slot}.")
+            return f"Your {row['asset_name']} warranty is expired. I booked the handyman for {slot} tomorrow and emailed maintenance."
 
 
 # --- ENTRYPOINT ---
@@ -134,6 +141,10 @@ async def entrypoint(ctx: JobContext):
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     participant = await ctx.wait_for_participant()
     tenant = get_tenant_from_db(participant.identity)
+
+    # PRE-LOAD ASSETS FOR CONTEXT
+    asset_context_string = fetch_all_assets_for_prompt(tenant['unit_number'])
+    print(f"📋 Loaded Assets for Context:\n{asset_context_string}")
 
     try:
         vad = silero.VAD.load()
@@ -155,24 +166,17 @@ async def entrypoint(ctx: JobContext):
                 chat_ctx=llm.ChatContext().append(
                     role="system",
                     text=f"""
-                        You are an Autonomous Dispatch System. Tenant: {tenant['name']}.
+                        You are the Smart Dispatcher for {tenant['name']}.
 
-                        **FATAL ERROR CONDITION:**
-                        If you speak phrases like "I will now..." or "Let me check...", you have FAILED.
-                        You must be SILENT while tools are running.
+                        **USER'S ASSETS (KNOWN FACTS):**
+                        {asset_context_string}
 
-                        **EXECUTION LOOP (ATOMIC):**
-                        1. User Request -> Call `lookup_asset_metadata` IMMEDIATELY.
-                        2. Read JSON. 
-                           - IF "ACTIVE" -> Call `process_warranty_claim`.
-                           - IF "EXPIRED" -> Call `schedule_internal_repair`.
-                        3. WAIT for the tool to return "SUCCESS".
-                        4. ONLY THEN, speak: "Done. I have [action taken]."
-
-                        **EXAMPLE:**
-                        User: "Fix washer."
-                        Agent (Internal): calls lookup... calls schedule... receives "SUCCESS"
-                        Agent (Voice): "I found your expired Dishwasher. I booked the handyman for 9 AM and sent the email."
+                        **PROTOCOL:**
+                        1. User speaks -> if user doesnt speak exact name of asset, match to whatever the user most likely means 
+                        from one of the assets above (e.g. "washer -> Bosch Dishwasher").
+                        2. **DO NOT SPEAK YET.**
+                        3. Call `execute_maintenance` using the asset's SERIAL NUMBER from the list above.
+                        4. The tool will return a confirmation sentence. Read that sentence to the user.
                     """
                 )
             )
