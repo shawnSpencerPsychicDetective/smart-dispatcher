@@ -14,7 +14,7 @@ class CalendarService:
         Returns a list of available hours for the next 24h.
         """
         # In a real app, this would query the Google Calendar API
-        print(f"📅 Checking calendar availability for {date_str}...")
+        print(f"Checking calendar availability for {date_str}...")
 
         all_slots = ["09:00", "10:00", "11:00", "13:00", "14:00", "15:00"]
         free_slots = [slot for slot in all_slots if slot not in self.busy_slots]
@@ -26,8 +26,8 @@ class CalendarService:
         Simulates booking a slot.
         """
         if time_slot in self.busy_slots:
-            return f"❌ Error: Slot {time_slot} is already taken."
+            return f"Error: Slot {time_slot} is already taken."
 
         # Mark as busy in our simulation
         self.busy_slots.append(time_slot)
-        return f"✅ Scheduled: '{task_description}' on {date_str} at {time_slot}."
+        return f"Scheduled: '{task_description}' on {date_str} at {time_slot}."

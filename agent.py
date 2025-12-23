@@ -37,7 +37,7 @@ def get_tenant_by_chat_id(slack_id):
 
 async def run_agent():
     """Initializes the agent, sets up tools (Local & MCP), and runs the main chat loop for handling tenant requests."""
-    print("🤖 Smart Dispatcher (Aligned) Initializing...")
+    print("Smart Dispatcher Initializing...")
 
     email_tool = EmailDispatcher()
     calendar_tool = CalendarService()
@@ -109,7 +109,7 @@ async def run_agent():
                     }
                 })
 
-            print("\n✅ System Ready. Simulating Chat Interface.")
+            print("\nSystem Ready. Simulating Chat Interface.")
 
             while True:
                 chat_id_input = input("\n[Incoming Message] Enter Slack User ID (e.g., U402, U101) or 'quit': ")
@@ -122,7 +122,7 @@ async def run_agent():
                     print("❌ Unknown Slack ID. Ignoring.")
                     continue
 
-                print(f"🔍 Identified Tenant: {tenant['name']} in Unit {tenant['unit_number']}")
+                print(f"Identified Tenant: {tenant['name']} in Unit {tenant['unit_number']}")
 
                 messages = [
                     {"role": "system", "content": f"""
@@ -153,12 +153,12 @@ async def run_agent():
 
                 while tool_calls:
                     messages.append(response_msg)
-                    print(f"⚡ Agent Thinking... ({len(tool_calls)} steps)")
+                    print(f"Agent Thinking... ({len(tool_calls)} steps)")
 
                     for tool_call in tool_calls:
                         fname = tool_call.function.name
                         args = json.loads(tool_call.function.arguments)
-                        print(f"🔧 Tool: {fname}")
+                        print(f"Tool: {fname}")
 
                         result_content = ""
 
@@ -187,7 +187,7 @@ async def run_agent():
                     response_msg = response.choices[0].message
                     tool_calls = response_msg.tool_calls
 
-                print(f"💬 Agent: {response_msg.content}")
+                print(f"Agent: {response_msg.content}")
 
 if __name__ == "__main__":
     asyncio.run(run_agent())

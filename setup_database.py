@@ -97,9 +97,6 @@ def create_database():
 
     conn.commit()
     conn.close()
-    print("✅ Database updated with expanded records.")
-    print("   - Added Tenant 'Charlie' (U205) with 2 assets.")
-    print("   - Added new vendors (LG, Bosch, Whirlpool).")
 
 
 if __name__ == "__main__":

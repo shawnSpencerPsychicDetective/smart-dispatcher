@@ -26,7 +26,7 @@ def load_data(query):
 
 
 # --- TITLE & METRICS ---
-st.title("🏢 Smart Dispatcher Command Center")
+st.title("Smart Dispatcher Command Center")
 st.markdown("Real-time monitoring of tenant complaints, asset warranties, and automated dispatch actions.")
 
 # Top Level Metrics
@@ -52,7 +52,7 @@ with col3:
 st.divider()
 
 # --- MAIN DASHBOARD LAYOUT ---
-tab1, tab2, tab3 = st.tabs(["📧 Dispatch Logs", "🛠️ Asset Database", "👥 Tenant Directory"])
+tab1, tab2, tab3 = st.tabs(["Dispatch Logs", "Asset Database", "Tenant Directory"])
 
 # TAB 1: EMAIL LOGS (The Audit Trail)
 with tab1:
@@ -60,7 +60,7 @@ with tab1:
     st.caption("This log tracks every email drafted and sent by the AI Agent.")
 
     # Auto-refresh button
-    if st.button('🔄 Refresh Logs'):
+    if st.button('Refresh Logs'):
         st.rerun()
 
     df_emails = load_data("SELECT id, recipient_email, subject, status, sent_at FROM email_logs ORDER BY id DESC")
@@ -80,7 +80,7 @@ with tab1:
     )
 
     # Detailed View
-    st.write("### 🔍 Inspect Email Content")
+    st.write("### Inspect Email Content")
     if not df_emails.empty:
         selected_id = st.selectbox("Select Email ID to view body:", df_emails['id'])
 
@@ -97,7 +97,7 @@ with tab2:
 
     # Add a calculated column for "Status"
     df_assets['Status'] = df_assets['warranty_expires'].apply(
-        lambda x: "✅ Active" if x > pd.Timestamp.now().strftime('%Y-%m-%d') else "⚠️ Expired"
+        lambda x: "Active" if x > pd.Timestamp.now().strftime('%Y-%m-%d') else "Expired"
     )
 
     st.dataframe(

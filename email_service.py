@@ -21,8 +21,8 @@ class EmailDispatcher:
             with smtplib.SMTP('localhost', 1025) as server:
                 server.send_message(msg)
 
-            return f"✅ Email successfully dispatched to {recipient} via Mock Server."
+            return f"Email successfully dispatched to {recipient} via Mock Server."
         except ConnectionRefusedError:
-            return "❌ Error: Mock SMTP Server is not running. Run 'python mock_smtp.py' in a separate terminal."
+            return "Error: Mock SMTP Server is not running. Run 'python mock_smtp.py' in a separate terminal."
         except Exception as e:
-            return f"❌ Error sending email: {str(e)}"
+            return f"Error sending email: {str(e)}"

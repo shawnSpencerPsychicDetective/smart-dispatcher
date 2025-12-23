@@ -15,7 +15,7 @@ mcp = FastMCP("SmartBuildingDispatcher")
 # --- HELPER: EMAIL ---
 def internal_send_email(recipient, subject, body):
     """Sends an email using the local mock SMTP server on port 1025."""
-    print(f"⚡ [MCP SERVER] Sending email to {recipient}...")
+    print(f"[MCP SERVER] Sending email to {recipient}...")
     msg = MIMEMultipart()
     msg['From'] = "dispatch@smartbuilding.com"
     msg['To'] = recipient
@@ -26,10 +26,10 @@ def internal_send_email(recipient, subject, body):
         # Port 1025 for Mock Server
         with smtplib.SMTP('localhost', 1025) as server:
             server.send_message(msg)
-        print(f"✅ [MCP SERVER] Email SENT.")
+        print(f"[MCP SERVER] Email SENT.")
         return True
     except Exception as e:
-        print(f"❌ [MCP SERVER] Email Failed: {e}")
+        print(f"[MCP SERVER] Email Failed: {e}")
         return False
 
 # --- TOOL 1: CONTEXT LOADER ---
@@ -121,7 +121,7 @@ def execute_maintenance(serial_number: str) -> str:
             print(f"   -> Booked Slot: {slot}")
 
         except Exception as e:
-            print(f"⚠️ [MCP SERVER] Calendar Error: {e}. Using emergency fallback.")
+            print(f"[MCP SERVER] Calendar Error: {e}. Using emergency fallback.")
             slot = "09:00 (Emergency)"
 
         # 4. Email Maintenance

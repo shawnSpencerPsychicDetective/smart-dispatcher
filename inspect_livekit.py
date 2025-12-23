@@ -5,12 +5,12 @@ print(dir(livekit.agents))
 
 try:
     from livekit.agents.pipeline import VoicePipelineAgent
-    print("\n✅ SUCCESS: Found VoicePipelineAgent in 'livekit.agents.pipeline'")
+    print("\nSUCCESS: Found VoicePipelineAgent in 'livekit.agents.pipeline'")
 except ImportError:
-    print("\n❌ FAILED: Could not find 'pipeline' module.")
+    print("\nFAILED: Could not find 'pipeline' module.")
 
 try:
     from livekit.agents import VoicePipelineAgent
-    print("\n✅ SUCCESS: Found VoicePipelineAgent in top-level 'livekit.agents'")
+    print("\nSUCCESS: Found VoicePipelineAgent in top-level 'livekit.agents'")
 except ImportError:
-    print("\n❌ FAILED: Could not find VoicePipelineAgent in top level.")
+    print("\nFAILED: Could not find VoicePipelineAgent in top level.")
