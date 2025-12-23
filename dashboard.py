@@ -13,10 +13,12 @@ st.set_page_config(
 
 # --- DATABASE CONNECTION ---
 def get_connection():
+    """Establishes and returns a connection to the local SQLite database."""
     return sqlite3.connect("maintenance.db")
 
 
 def load_data(query):
+    """Executes a SQL query against the database and returns the result as a Pandas DataFrame."""
     conn = get_connection()
     df = pd.read_sql_query(query, conn)
     conn.close()
@@ -66,6 +68,7 @@ with tab1:
 
     # Color code the status
     def highlight_status(val):
+        """Returns CSS styling to color-code the status: Green for SENT, Red for others."""
         color = 'green' if val == 'SENT' else 'red'
         return f'color: {color}; font-weight: bold'
 

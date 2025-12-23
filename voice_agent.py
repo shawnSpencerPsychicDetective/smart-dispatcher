@@ -5,7 +5,7 @@ import os
 from dotenv import load_dotenv
 
 # --- NEW: Import Langfuse directly here ---
-from langfuse import Langfuse
+from Langfuse import Langfuse
 
 from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli, llm
 from livekit.agents.multimodal import MultimodalAgent
@@ -22,17 +22,21 @@ logger = logging.getLogger("voice-agent")
 langfuse = Langfuse()
 
 class DispatcherClient(llm.FunctionContext):
+    """Defines the function context for the AI, bridging the LiveKit agent to the MCP tools for maintenance execution."""
     def __init__(self, mcp_session):
+        """Initializes the client with an active MCP session."""
         super().__init__()
         self.mcp = mcp_session
 
     @llm.ai_callable(description="Execute maintenance for a specific asset using its SERIAL NUMBER.")
     async def execute_request(self, serial_number: str):
+        """Exposes the 'execute_maintenance' MCP tool to the LLM, allowing it to trigger maintenance workflows by serial number."""
         print(f"⚡ [AGENT] Calling MCP Tool 'execute_maintenance' with {serial_number}")
         result = await self.mcp.call_tool("execute_maintenance", arguments={"serial_number": serial_number})
         return result.content[0].text
 
 async def entrypoint(ctx: JobContext):
+    """Main agent entrypoint: connects to LiveKit, initializes the MCP client to fetch data, retrieves dynamic prompts from Langfuse, and starts the multimodal voice agent."""
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     participant = await ctx.wait_for_participant()
     

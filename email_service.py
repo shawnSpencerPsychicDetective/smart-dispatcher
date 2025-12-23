@@ -5,6 +5,7 @@ from email.mime.multipart import MIMEMultipart
 
 class EmailDispatcher:
     def send_email(self, subject, body, recipient):
+        """Constructs and sends an email using a local mock SMTP server running on port 1025."""
         sender_email = "dispatch@smartbuilding.com"
 
         # Create a standard email object

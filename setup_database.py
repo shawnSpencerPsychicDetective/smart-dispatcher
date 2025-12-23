@@ -3,6 +3,7 @@ import os
 
 
 def create_database():
+    """Initializes the SQLite database by creating tables (tenants, assets, vendors, email_logs) and populating them with seed data for testing."""
     # Ensure we overwrite any broken/empty file
     if os.path.exists("maintenance.db"):
         os.remove("maintenance.db")

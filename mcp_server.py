@@ -14,6 +14,7 @@ mcp = FastMCP("SmartBuildingDispatcher")
 
 # --- HELPER: EMAIL ---
 def internal_send_email(recipient, subject, body):
+    """Sends an email using the local mock SMTP server on port 1025."""
     print(f"⚡ [MCP SERVER] Sending email to {recipient}...")
     msg = MIMEMultipart()
     msg['From'] = "dispatch@smartbuilding.com"
@@ -34,6 +35,7 @@ def internal_send_email(recipient, subject, body):
 # --- TOOL 1: CONTEXT LOADER ---
 @mcp.tool()
 def get_tenant_context(unit_number: str) -> str:
+    """Retrieves a formatted list of assets and their warranty details for a specific unit."""
     try:
         conn = sqlite3.connect("maintenance.db")
         conn.row_factory = sqlite3.Row
@@ -54,6 +56,7 @@ def get_tenant_context(unit_number: str) -> str:
 # --- TOOL 2: THE EXECUTOR (RESTORED) ---
 @mcp.tool()
 def execute_maintenance(serial_number: str) -> str:
+    """Checks warranty status for an asset and automatically handles dispatch (Manufacturer email vs. Internal booking)."""
     print(f"\n[MCP SERVER] Processing Serial: {serial_number}")
     
     # 1. DATABASE LOOKUP

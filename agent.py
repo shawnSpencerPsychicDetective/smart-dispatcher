@@ -25,6 +25,7 @@ server_params = StdioServerParameters(
 
 # --- LOCAL HELPER FUNCTIONS ---
 def get_tenant_by_chat_id(slack_id):
+    """Retrieves tenant name and unit number from the database using their Slack User ID."""
     conn = sqlite3.connect("maintenance.db")
     cursor = conn.cursor()
     cursor.execute("SELECT name, unit_number FROM tenants WHERE slack_user_id=?", (slack_id,))
@@ -35,6 +36,7 @@ def get_tenant_by_chat_id(slack_id):
     return None
 
 async def run_agent():
+    """Initializes the agent, sets up tools (Local & MCP), and runs the main chat loop for handling tenant requests."""
     print("🤖 Smart Dispatcher (Aligned) Initializing...")
 
     email_tool = EmailDispatcher()
@@ -132,11 +134,11 @@ async def run_agent():
                     1. SEARCH: Use 'get_assets' to find the appliance.
                     2. CHECK: Use 'check_warranty_status' (Requires asset_name and unit_number).
                     3. DECIDE:
-                       - IF ACTIVE: The tool returns the Manufacturer Email. Dispatch Email immediately.
-                       - IF EXPIRED: The tool returns the Internal Handyman Email.
-                           a. Call 'check_calendar_availability'.
-                           b. Call 'book_appointment'.
-                           c. Call 'dispatch_email' with the time slot details.
+                        - IF ACTIVE: The tool returns the Manufacturer Email. Dispatch Email immediately.
+                        - IF EXPIRED: The tool returns the Internal Handyman Email.
+                            a. Call 'check_calendar_availability'.
+                            b. Call 'book_appointment'.
+                            c. Call 'dispatch_email' with the time slot details.
 
                     RESTRICTIONS:
                     - Use the EXACT email and Serial Number returned by 'check_warranty_status'.

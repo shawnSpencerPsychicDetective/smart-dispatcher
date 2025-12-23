@@ -3,7 +3,10 @@ import asyncio
 from aiosmtpd.controller import Controller
 
 class DebugEmailHandler:
+    """A handler class for the aiosmtpd controller to intercept and print email data."""
+    
     async def handle_DATA(self, server, session, envelope):
+        """Processes incoming email data, printing the sender, recipient, and content to the console for debugging."""
         print("\n" + "!"*50)
         print("📨 EMAIL RECEIVED!")
         print("!"*50)
