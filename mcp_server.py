@@ -51,7 +51,7 @@ def get_tenant_context(unit_number: str) -> str:
     except Exception as e:
         return f"Error loading context: {e}"
 
-# --- TOOL 2: THE EXECUTOR (FIXED FOR LIST INPUT) ---
+# --- TOOL 2: THE EXECUTOR (RESTORED) ---
 @mcp.tool()
 def execute_maintenance(serial_number: str) -> str:
     print(f"\n[MCP SERVER] Processing Serial: {serial_number}")
