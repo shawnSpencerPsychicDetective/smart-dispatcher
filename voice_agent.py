@@ -5,7 +5,7 @@ import os
 from dotenv import load_dotenv
 
 # --- NEW: Import Langfuse directly here ---
-from Langfuse import Langfuse
+from langfuse import Langfuse
 
 from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli, llm
 from livekit.agents.multimodal import MultimodalAgent
