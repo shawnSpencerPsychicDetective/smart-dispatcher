@@ -1,19 +1,22 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
+import os
 
 # Set page configuration
 st.set_page_config(
-    page_title="Smart Dispatcher Command Center",
-    page_icon="🏢",
-    layout="wide"
+    page_title="Smart Dispatcher Command Center", page_icon="🏢", layout="wide"
 )
 
 
 # --- DATABASE CONNECTION ---
 def get_connection():
-    """Establishes and returns a connection to the local SQLite database."""
-    return sqlite3.connect("maintenance.db")
+    """Establishes and returns a connection to the local SQLite database,
+    locating it via absolute path in the data directory.
+    """
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    db_path = os.path.join(base_dir, "data", "maintenance.db")
+    return sqlite3.connect(db_path)
 
 
 def load_data(query):
@@ -49,32 +52,24 @@ with col2:
         f"'{pd.Timestamp.now().strftime('%Y-%m-%d')}'"
     )
     count_active = load_data(query_active)
-    st.metric(
-        label="Active Warranties", value=count_active.iloc[0]["count"]
-    )
+    st.metric(label="Active Warranties", value=count_active.iloc[0]["count"])
 
 # Metric 3: Total Dispatches (Emails Sent)
 with col3:
     count_emails = load_data(
         "SELECT COUNT(*) as count FROM email_logs WHERE status='SENT'"
     )
-    st.metric(
-        label="Total Dispatches", value=count_emails.iloc[0]["count"]
-    )
+    st.metric(label="Total Dispatches", value=count_emails.iloc[0]["count"])
 
 st.divider()
 
 # --- MAIN DASHBOARD LAYOUT ---
-tab1, tab2, tab3 = st.tabs(
-    ["Dispatch Logs", "Asset Database", "Tenant Directory"]
-)
+tab1, tab2, tab3 = st.tabs(["Dispatch Logs", "Asset Database", "Tenant Directory"])
 
 # TAB 1: EMAIL LOGS (The Audit Trail)
 with tab1:
     st.subheader("Live Dispatch Communications")
-    st.caption(
-        "This log tracks every email drafted and sent by the AI Agent."
-    )
+    st.caption("This log tracks every email drafted and sent by the AI Agent.")
 
     # Auto-refresh button
     if st.button("Refresh Logs"):
@@ -102,9 +97,7 @@ with tab1:
     # Detailed View
     st.write("### Inspect Email Content")
     if not df_emails.empty:
-        selected_id = st.selectbox(
-            "Select Email ID to view body:", df_emails["id"]
-        )
+        selected_id = st.selectbox("Select Email ID to view body:", df_emails["id"])
 
         if selected_id:
             email_body = load_data(
@@ -127,9 +120,7 @@ with tab2:
     # Add a calculated column for "Status"
     df_assets["Status"] = df_assets["warranty_expires"].apply(
         lambda x: (
-            "Active"
-            if x > pd.Timestamp.now().strftime("%Y-%m-%d")
-            else "Expired"
+            "Active" if x > pd.Timestamp.now().strftime("%Y-%m-%d") else "Expired"
         )
     )
 
@@ -155,8 +146,8 @@ with tab3:
 # --- SIDEBAR: SYSTEM HEALTH ---
 st.sidebar.header("System Status")
 st.sidebar.success("Database: Connected")
-st.sidebar.info("Agent Status: Idle (Run 'python agent.py' to activate)")
+st.sidebar.info("Agent Status: Idle (Run 'python -m src.voice_agent' to activate)")
 
 # Quick Link to run instructions
 with st.sidebar.expander("How to run the Agent?"):
-    st.code("python agent.py", language="bash")
+    st.code("python -m src.voice_agent", language="bash")

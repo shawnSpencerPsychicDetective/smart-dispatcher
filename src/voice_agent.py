@@ -39,8 +39,7 @@ class DispatcherClient(llm.FunctionContext):
         it to trigger maintenance workflows by serial number.
         """
         print(
-            f"[AGENT] Calling MCP Tool 'execute_maintenance' with "
-            f"{serial_number}"
+            f"[AGENT] Calling MCP Tool 'execute_maintenance' with " f"{serial_number}"
         )
         result = await self.mcp.call_tool(
             "execute_maintenance", arguments={"serial_number": serial_number}
@@ -60,7 +59,7 @@ async def entrypoint(ctx: JobContext):
     unit_number = "205"
 
     server_params = StdioServerParameters(
-        command=sys.executable, args=["mcp_server.py"], env=None
+        command=sys.executable, args=["src/mcp_server.py"], env=None
     )
 
     print("Connecting to MCP Server...")
@@ -84,8 +83,7 @@ async def entrypoint(ctx: JobContext):
 
             # Compile it with the data we got from step 1
             system_instruction = prompt_obj.compile(
-                tenant_name=tenant_name,
-                asset_context_string=asset_context_string
+                tenant_name=tenant_name, asset_context_string=asset_context_string
             )
 
             # DEBUG: Print it to prove it works
@@ -101,17 +99,12 @@ async def entrypoint(ctx: JobContext):
                 temperature=0.6,
             )
 
-            agent = MultimodalAgent(
-                model=model, fnc_ctx=DispatcherClient(session)
-            )
+            agent = MultimodalAgent(model=model, fnc_ctx=DispatcherClient(session))
 
             agent.start(ctx.room, participant)
             print("Realtime Agent Started.")
 
-            while (
-                ctx.room.connection_state
-                == rtc.ConnectionState.CONN_CONNECTED
-            ):
+            while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
                 await asyncio.sleep(1)
 
 

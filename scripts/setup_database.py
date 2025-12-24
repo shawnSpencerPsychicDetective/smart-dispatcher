@@ -3,17 +3,25 @@ import os
 
 
 def create_database():
-    """Initializes the SQLite database by creating tables
-     (tenants, assets, vendors, email_logs)
-      and populating them with seed data for testing."""
-    # Ensure we overwrite any broken/empty file
-    if os.path.exists("maintenance.db"):
-        os.remove("maintenance.db")
+    """Initializes the SQLite database by creating tables (tenants, assets,
+    vendors, email_logs) and populating them with seed data for testing.
+    """
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    data_dir = os.path.join(base_dir, "data")
+    db_path = os.path.join(data_dir, "maintenance.db")
 
-    conn = sqlite3.connect("maintenance.db")
+    # Ensure data directory exists
+    if not os.path.exists(data_dir):
+        os.makedirs(data_dir)
+
+    # Ensure we overwrite any broken/empty file
+    if os.path.exists(db_path):
+        os.remove(db_path)
+
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # 1. Tenants Table (Updated with 'slack_user_id' per Section 3.4.2)
+    # 1. Tenants Table
     cursor.execute(
         """
     CREATE TABLE IF NOT EXISTS tenants (
@@ -40,7 +48,7 @@ def create_database():
     """
     )
 
-    # 3. Vendors Table (Per Section 3.4.2)
+    # 3. Vendors Table
     cursor.execute(
         """
     CREATE TABLE IF NOT EXISTS vendors (
@@ -52,7 +60,7 @@ def create_database():
     """
     )
 
-    # 4. Email Logs (For audit)
+    # 4. Email Logs
     cursor.execute(
         """
     CREATE TABLE IF NOT EXISTS email_logs (
@@ -69,7 +77,6 @@ def create_database():
     # --- SEED DATA ---
 
     # Tenants
-    # Charlie (U205) is our test subject for multiple assets.
     tenants_data = [
         ("Alice", "U402", "402", "+15550199"),
         ("Bob", "U101", "101", "+15550200"),
@@ -83,7 +90,6 @@ def create_database():
     )
 
     # Assets
-    # Note: Unit 205 has TWO assets.
     assets_data = [
         ("402", "Air Conditioner", "Samsung", "SN-AC-402", "2026-12-31"),
         ("101", "Water Heater", "GenericCorp", "SN-WH-101", "2022-01-01"),
@@ -120,6 +126,7 @@ def create_database():
 
     conn.commit()
     conn.close()
+    print(f"Database created successfully at: {db_path}")
 
 
 if __name__ == "__main__":

@@ -1,3 +1,8 @@
+import sys
+import os
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from mcp.server.fastmcp import FastMCP
 import sqlite3
 import smtplib
@@ -5,11 +10,22 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 
-# IMPORT THE REAL CALENDAR SERVICE
-from calendar_service import CalendarService
+from src.services.calendar_service import CalendarService
 
 # Initialize the MCP Server
 mcp = FastMCP("SmartBuildingDispatcher")
+
+
+# --- HELPER: DATABASE CONNECTION ---
+def get_db_connection():
+    """Helper to get a DB connection using an absolute path to the data dir."""
+    # Calculates path to ../data/maintenance.db relative to this file
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    db_path = os.path.join(base_dir, "data", "maintenance.db")
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 # --- HELPER: EMAIL ---
@@ -40,8 +56,7 @@ def get_tenant_context(unit_number: str) -> str:
     specific unit.
     """
     try:
-        conn = sqlite3.connect("maintenance.db")
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         cursor = conn.cursor()
         query = (
             "SELECT a.asset_name, a.brand, a.serial_number, a.warranty_expires"
@@ -73,8 +88,7 @@ def execute_maintenance(serial_number: str) -> str:
     print(f"\n[MCP SERVER] Processing Serial: {serial_number}")
 
     # 1. DATABASE LOOKUP
-    conn = sqlite3.connect("maintenance.db")
-    conn.row_factory = sqlite3.Row
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -96,9 +110,7 @@ def execute_maintenance(serial_number: str) -> str:
     # 2. WARRANTY CHECK
     today = datetime.now().date()
     try:
-        expires = datetime.strptime(
-            row["warranty_expires"], "%Y-%m-%d"
-        ).date()
+        expires = datetime.strptime(row["warranty_expires"], "%Y-%m-%d").date()
     except ValueError:
         expires = today  # Fallback
 
@@ -145,9 +157,7 @@ def execute_maintenance(serial_number: str) -> str:
             print(f"   -> Booked Slot: {slot}")
 
         except Exception as e:
-            print(
-                f"[MCP SERVER] Calendar Error: {e}. Using emergency fallback."
-            )
+            print(f"[MCP SERVER] Calendar Error: {e}. Using emergency fallback.")
             slot = "09:00 (Emergency)"
 
         # 4. Email Maintenance
