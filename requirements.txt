@@ -10,3 +10,5 @@ livekit-plugins-openai>=0.10
 livekit-plugins-silero<1.0
 psutil
 langfuse
+flake8
+black

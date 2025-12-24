@@ -2,23 +2,33 @@
 import asyncio
 from aiosmtpd.controller import Controller
 
+
 class DebugEmailHandler:
-    """A handler class for the aiosmtpd controller to intercept and print email data."""
-    
+    """A handler class for the aiosmtpd controller to intercept and print
+    email data.
+    """
+
     async def handle_DATA(self, server, session, envelope):
-        """Processes incoming email data, printing the sender, recipient, and content to the console for debugging."""
-        print("\n" + "!"*50)
+        """Processes incoming email data, printing the sender, recipient,
+        and content to the console for debugging.
+        """
+        print("\n" + "!" * 50)
         print("EMAIL RECEIVED!")
-        print("!"*50)
+        print("!" * 50)
         print(f"FROM: {envelope.mail_from}")
         print(f"TO:   {envelope.rcpt_tos}")
-        print(f"CONTENT:\n{envelope.content.decode('utf8', errors='replace')}")
-        print("!"*50 + "\n")
-        return '250 OK'
+        print(
+            f"CONTENT:\n{envelope.content.decode('utf8', errors='replace')}"
+        )
+        print("!" * 50 + "\n")
+        return "250 OK"
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     # 0.0.0.0 is CRITICAL for Codespaces
-    controller = Controller(DebugEmailHandler(), hostname='0.0.0.0', port=1025)
+    controller = Controller(
+        DebugEmailHandler(), hostname="0.0.0.0", port=1025
+    )
     controller.start()
     print("SMTP Server Listening on 0.0.0.0:1025...")
     try:
