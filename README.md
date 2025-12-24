@@ -115,7 +115,7 @@ pip install -r requirements.txt
 
 ---
 
-## Configuration (environment variables)
+## Configuration
 
 Create a `.env` file at the repository root with the following variables (example values shown as placeholders):
 
@@ -148,7 +148,7 @@ This will create `data/maintenance.db` and populate it with sample tenants, asse
 
 ---
 
-## Running the system (development)
+## Running the system
 
 The system requires three processes during development: the mock SMTP server, the Streamlit admin dashboard, and the voice agent which also starts the MCP server.
 
