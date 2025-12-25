@@ -32,7 +32,7 @@ def get_db_connection():
 def internal_send_email(recipient, subject, body):
     """Sends an email using the local mock SMTP server AND logs it to SQLite."""
     print(f"[MCP SERVER] Sending email to {recipient}...")
-    
+
     # 1. Send the actual email
     msg = MIMEMultipart()
     msg["From"] = "dispatch@smartbuilding.com"
@@ -44,13 +44,13 @@ def internal_send_email(recipient, subject, body):
         with smtplib.SMTP("localhost", 1025) as server:
             server.send_message(msg)
         print("[MCP SERVER] Email SENT.")
-        
+
         # 2. LOG TO DATABASE (The missing piece!)
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
             """
-            INSERT INTO email_logs (recipient_email, subject, body, status) 
+            INSERT INTO email_logs (recipient_email, subject, body, status)
             VALUES (?, ?, ?, ?)
             """,
             (recipient, subject, body, "SENT")
@@ -58,7 +58,7 @@ def internal_send_email(recipient, subject, body):
         conn.commit()
         conn.close()
         print("[MCP SERVER] Logged to Database.")
-        
+
         return True
     except Exception as e:
         print(f"[MCP SERVER] Email Failed: {e}")
