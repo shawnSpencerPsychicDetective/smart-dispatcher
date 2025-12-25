@@ -102,7 +102,7 @@ async def entrypoint(ctx: JobContext):
             agent = MultimodalAgent(model=model, fnc_ctx=DispatcherClient(session))
 
             agent.start(ctx.room, participant)
-            await agent.generate_reply()
+            agent.generate_reply()
             print("Realtime Agent Started.")
 
             while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
