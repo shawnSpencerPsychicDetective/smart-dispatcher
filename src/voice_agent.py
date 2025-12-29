@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import sys
+import os
 from dotenv import load_dotenv
 
 from langfuse import Langfuse
@@ -87,7 +88,7 @@ async def entrypoint(ctx: JobContext):
             # 3. CONFIGURE REALTIME MODEL
             model = realtime.RealtimeModel(
                 instructions=system_instruction,
-                voice="alloy",
+                voice=os.getenv("VOICE_PRESET"),
                 temperature=0.6,
             )
 
