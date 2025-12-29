@@ -27,9 +27,7 @@ def create_database():
     CREATE TABLE IF NOT EXISTS tenants (
         id INTEGER PRIMARY KEY,
         name TEXT,
-        slack_user_id TEXT,  -- Links Chat ID to Tenant
-        unit_number TEXT,
-        phone_number TEXT
+        unit_number TEXT
     )
     """
     )
@@ -78,14 +76,13 @@ def create_database():
 
     # Tenants
     tenants_data = [
-        ("Alice", "U402", "402", "+15550199"),
-        ("Bob", "U101", "101", "+15550200"),
-        ("Charlie", "U205", "205", "+15550201"),
-        ("Diana", "U303", "303", "+15550202"),
+        ("Alice", "402"),
+        ("Bob", "101"),
+        ("Charlie", "205"),
+        ("Diana", "303"),
     ]
     cursor.executemany(
-        "INSERT INTO tenants (name, slack_user_id, unit_number, phone_number) "
-        "VALUES (?, ?, ?, ?)",
+        "INSERT INTO tenants (name, unit_number) " "VALUES (?, ?)",
         tenants_data,
     )
 

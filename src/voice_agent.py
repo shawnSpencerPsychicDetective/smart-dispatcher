@@ -31,16 +31,31 @@ class DispatcherClient(llm.FunctionContext):
 
     @llm.ai_callable(
         description=(
-            "Execute maintenance for a specific asset using its SERIAL NUMBER."
+            "Look up tenant details and asset list using the Unit Number "
+            "(e.g., '205'). Call this immediately when the user provides "
+            "their location."
+        )
+    )
+    async def lookup_unit(self, unit_number: str):
+        """Fetches tenant name and asset inventory for a given unit."""
+        print(f"[AGENT] Looking up context for Unit: {unit_number}")
+        result = await self.mcp.call_tool(
+            "get_tenant_context", arguments={"unit_number": unit_number}
+        )
+        # The result (text string of assets) is automatically added to the
+        # conversation history so the LLM can see it.
+        return result.content[0].text
+
+    @llm.ai_callable(
+        description=(
+            "Execute maintenance for a specific asset using its SERIAL NUMBER. "
+            "Only call this after identifying the correct serial number from "
+            "the context."
         )
     )
     async def execute_request(self, serial_number: str):
-        """Exposes the 'execute_maintenance' MCP tool to the LLM, allowing
-        it to trigger maintenance workflows by serial number.
-        """
-        print(
-            f"[AGENT] Calling MCP Tool 'execute_maintenance' with " f"{serial_number}"
-        )
+        """Triggers the maintenance workflow."""
+        print(f"[AGENT] Executing Request for Serial: {serial_number}")
         result = await self.mcp.call_tool(
             "execute_maintenance", arguments={"serial_number": serial_number}
         )
@@ -48,15 +63,9 @@ class DispatcherClient(llm.FunctionContext):
 
 
 async def entrypoint(ctx: JobContext):
-    """Main agent entrypoint: connects to LiveKit, initializes the MCP
-    client to fetch data, retrieves dynamic prompts from Langfuse, and
-    starts the multimodal voice agent.
-    """
+    """Main agent entrypoint."""
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     participant = await ctx.wait_for_participant()
-
-    tenant_name = "Charlie"
-    unit_number = "205"
 
     server_params = StdioServerParameters(
         command=sys.executable, args=["src/mcp_server.py"], env=None
@@ -68,29 +77,12 @@ async def entrypoint(ctx: JobContext):
             await session.initialize()
             print("MCP Connected.")
 
-            # 1. FETCH CONTEXT (Data) via MCP
-            print("Fetching Context from database...")
-            context_result = await session.call_tool(
-                "get_tenant_context", arguments={"unit_number": unit_number}
-            )
-            asset_context_string = context_result.content[0].text
-
-            # 2. FETCH PROMPT (Configuration) via Direct Langfuse Call
+            # 1. FETCH PROMPT FROM LANGFUSE
             print("Fetching System Prompt directly from Langfuse...")
-
-            # Retrieve the prompt object
             prompt_obj = langfuse.get_prompt("smart-dispatcher")
 
-            # Compile it with the data we got from step 1
-            system_instruction = prompt_obj.compile(
-                tenant_name=tenant_name, asset_context_string=asset_context_string
-            )
-
-            # DEBUG: Print it to prove it works
-            print(
-                f"\n--- INSTRUCTION LOADED ---\n{system_instruction}\n"
-                "--------------------------\n"
-            )
+            # 2. COMPILE
+            system_instruction = prompt_obj.compile()
 
             # 3. CONFIGURE REALTIME MODEL
             model = realtime.RealtimeModel(
@@ -102,7 +94,10 @@ async def entrypoint(ctx: JobContext):
             agent = MultimodalAgent(model=model, fnc_ctx=DispatcherClient(session))
 
             agent.start(ctx.room, participant)
+
+            # 4. KICKSTART CONVERSATION
             agent.generate_reply()
+
             print("Realtime Agent Started.")
 
             while ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:

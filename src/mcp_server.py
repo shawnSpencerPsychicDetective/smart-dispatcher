@@ -1,39 +1,33 @@
 import sys
 import os
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from mcp.server.fastmcp import FastMCP
 import sqlite3
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 
-from src.services.calendar_service import CalendarService
+# Add project root to path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# Initialize the MCP Server
+from mcp.server.fastmcp import FastMCP  # noqa: E402
+from src.services.calendar_service import CalendarService  # noqa: E402
+
 mcp = FastMCP("SmartBuildingDispatcher")
 
 
-# --- HELPER: DATABASE CONNECTION ---
 def get_db_connection():
     """Helper to get a DB connection using an absolute path to the data dir."""
-    # Calculates path to ../data/maintenance.db relative to this file
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     db_path = os.path.join(base_dir, "data", "maintenance.db")
-
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 
 
-# --- HELPER: EMAIL ---
 def internal_send_email(recipient, subject, body):
-    """Sends an email using the local mock SMTP server AND logs it to SQLite."""
+    """Sends email via mock SMTP and logs to SQLite."""
     print(f"[MCP SERVER] Sending email to {recipient}...")
 
-    # 1. Send the actual email
     msg = MIMEMultipart()
     msg["From"] = "dispatch@smartbuilding.com"
     msg["To"] = recipient
@@ -45,35 +39,38 @@ def internal_send_email(recipient, subject, body):
             server.send_message(msg)
         print("[MCP SERVER] Email SENT.")
 
-        # 2. LOG TO DATABASE (The missing piece!)
+        # Log to Database
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
             """
-            INSERT INTO email_logs (recipient_email, subject, body, status)
+            INSERT INTO email_logs (recipient_email, subject, body, status) 
             VALUES (?, ?, ?, ?)
             """,
-            (recipient, subject, body, "SENT")
+            (recipient, subject, body, "SENT"),
         )
         conn.commit()
         conn.close()
         print("[MCP SERVER] Logged to Database.")
-
         return True
     except Exception as e:
         print(f"[MCP SERVER] Email Failed: {e}")
         return False
 
 
-# --- TOOL 1: CONTEXT LOADER ---
 @mcp.tool()
 def get_tenant_context(unit_number: str) -> str:
-    """Retrieves a formatted list of assets and their warranty details for a
-    specific unit.
-    """
+    """Retrieves tenant name and asset list for a specific unit."""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+
+        # Get Tenant Name
+        cursor.execute("SELECT name FROM tenants WHERE unit_number = ?", (unit_number,))
+        tenant = cursor.fetchone()
+        tenant_name = tenant["name"] if tenant else "Unknown Tenant"
+
+        # Get Assets
         query = (
             "SELECT a.asset_name, a.brand, a.serial_number, a.warranty_expires"
             " FROM assets a WHERE a.unit_number = ?"
@@ -82,7 +79,7 @@ def get_tenant_context(unit_number: str) -> str:
         rows = cursor.fetchall()
         conn.close()
 
-        asset_list = []
+        asset_list = [f"Tenant Name: {tenant_name}"]
         for r in rows:
             asset_list.append(
                 f"- {r['brand']} {r['asset_name']} "
@@ -90,25 +87,21 @@ def get_tenant_context(unit_number: str) -> str:
                 f"Expires: {r['warranty_expires']})"
             )
 
-        return "\n".join(asset_list) if asset_list else "No assets found."
+        return "\n".join(asset_list) if len(asset_list) > 1 else "No assets found."
     except Exception as e:
         return f"Error loading context: {e}"
 
 
-# --- TOOL 2: THE EXECUTOR (RESTORED) ---
 @mcp.tool()
 def execute_maintenance(serial_number: str) -> str:
-    """Checks warranty status for an asset and automatically handles
-    dispatch (Manufacturer email vs. Internal booking).
-    """
+    """Checks warranty and dispatches maintenance workflow."""
     print(f"\n[MCP SERVER] Processing Serial: {serial_number}")
 
-    # 1. DATABASE LOOKUP
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT a.asset_name, a.brand, a.warranty_expires, a.unit_number,
+        SELECT a.asset_name, a.brand, a.warranty_expires, a.unit_number, 
                v.contact_email, t.name as tenant_name
         FROM assets a
         LEFT JOIN vendors v ON a.brand = v.brand_affiliation
@@ -123,20 +116,17 @@ def execute_maintenance(serial_number: str) -> str:
     if not row:
         return "System Error: Asset not found in database."
 
-    # 2. WARRANTY CHECK
     today = datetime.now().date()
     try:
         expires = datetime.strptime(row["warranty_expires"], "%Y-%m-%d").date()
     except ValueError:
-        expires = today  # Fallback
+        expires = today
 
     is_active = expires >= today
     tenant_name = row["tenant_name"] or "Resident"
     asset_desc = f"{row['brand']} {row['asset_name']}"
 
-    # 3. EXECUTION BRANCHES
     if is_active:
-        # --- ACTIVE WARRANTY ---
         print("   -> Status: ACTIVE")
         recipient = row["contact_email"] or "warranty@generic.com"
         subject = f"Warranty Claim: {serial_number}"
@@ -144,46 +134,29 @@ def execute_maintenance(serial_number: str) -> str:
             f"Tenant: {tenant_name}\nUnit: {row['unit_number']}\n"
             f"Asset: {asset_desc}\nIssue: Reported by user."
         )
-
         internal_send_email(recipient, subject, body)
         return (
             f"I found your {asset_desc}. The warranty is active. I have "
             "notified the manufacturer and sent the confirmation email."
         )
-
     else:
-        # --- EXPIRED WARRANTY ---
         print("   -> Status: EXPIRED")
-
         try:
-            # 1. Check Availability
             cal_service = CalendarService()
             available_slots = cal_service.check_availability("tomorrow")
-            print(f"   -> Raw Slots: {available_slots}")
-
-            # 2. Parse List Logic
-            slot = "09:00"  # Default
-            if isinstance(available_slots, list) and len(available_slots) > 0:
-                slot = available_slots[0]  # Take the first free slot
-            elif isinstance(available_slots, str):
-                slot = available_slots  # Fallback if string
-
-            # 3. Book
+            slot = available_slots[0] if available_slots else "09:00"
             cal_service.book_slot("tomorrow", slot, f"Fix {asset_desc}")
             print(f"   -> Booked Slot: {slot}")
-
         except Exception as e:
-            print(f"[MCP SERVER] Calendar Error: {e}. Using emergency fallback.")
+            print(f"[MCP SERVER] Calendar Error: {e}")
             slot = "09:00 (Emergency)"
 
-        # 4. Email Maintenance
         recipient = "maintenance@building.com"
         subject = f"Work Order: {serial_number}"
         body = (
             f"Tenant: {tenant_name}\nAsset: {asset_desc}\n"
             f"Status: Expired\nAction: Booked for {slot}."
         )
-
         internal_send_email(recipient, subject, body)
         return (
             f"Your {row['asset_name']} warranty is expired. I booked the "
