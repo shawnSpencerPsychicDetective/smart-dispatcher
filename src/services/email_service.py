@@ -4,9 +4,28 @@ from email.mime.multipart import MIMEMultipart
 
 
 class EmailDispatcher:
-    def send_email(self, subject, body, recipient):
-        """Constructs and sends an email using a local mock SMTP server
+    """A service for constructing and dispatching emails via SMTP.
+
+    This class handles the creation of MIME messages and manages the 
+    connection to an SMTP server to deliver communications to vendors 
+    or maintenance staff.
+    """
+    def send_email(self, subject: str, body: str, recipient: str):
+        """Constructs and sends an email using a local mock SMTP server.
+
+        This method builds a multipart MIME message and attempts to deliver 
+        it via a local SMTP instance (typically the mock_smtp.py script) 
         running on port 1025.
+
+        Args:
+            subject (str): The subject line of the email.
+            body (str): The plain-text content of the email body.
+            recipient (str): The email address of the receiver.
+
+        Returns:
+            str: A status message indicating whether the email was sent 
+            successfully or a detailed error message if the connection 
+            failed or the server was not found.
         """
         sender_email = "dispatch@smartbuilding.com"
 

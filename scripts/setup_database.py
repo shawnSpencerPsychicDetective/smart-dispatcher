@@ -3,8 +3,15 @@ import os
 
 
 def create_database():
-    """Initializes the SQLite database by creating tables (tenants, assets,
-    vendors, email_logs) and populating them with seed data for testing.
+    """Initializes the SQLite database with schema and seed data.
+
+    This function performs the following actions:
+    1.  Calculates the correct path for 'data/maintenance.db'.
+    2.  Removes any existing database file to ensure a clean state.
+    3.  Creates four tables: 'tenants', 'assets', 'vendors', and 'email_logs'.
+    4.  Populates these tables with predefined seed data for testing scenarios.
+
+    The database file is created in the 'data' directory at the project root.
     """
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     data_dir = os.path.join(base_dir, "data")

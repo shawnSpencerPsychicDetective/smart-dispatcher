@@ -9,8 +9,20 @@ class DebugEmailHandler:
     """
 
     async def handle_DATA(self, server, session, envelope):
-        """Processes incoming email data, printing the sender, recipient,
-        and content to the console for debugging.
+        """Processes incoming email data and prints it to the console.
+
+        This asynchronous method is called by the SMTP controller when the DATA
+        command is received. It decodes the email content and logs the transaction
+        details (sender, recipient, body) to standard output.
+
+        Args:
+            server: The SMTP server instance.
+            session: The current SMTP session object.
+            envelope: An object containing the message data, including mail_from,
+                rcpt_tos, and content.
+
+        Returns:
+            str: An SMTP response code indicating success ("250 OK").
         """
         print("\n" + "!" * 50)
         print("EMAIL RECEIVED!")

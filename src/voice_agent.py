@@ -21,8 +21,11 @@ langfuse = Langfuse()
 
 
 class DispatcherClient(llm.FunctionContext):
-    """Defines the function context for the AI, bridging the LiveKit agent to
-    the MCP tools for maintenance execution.
+    """Provides a bridge between the AI agent and the Model Context Protocol (MCP) server.
+
+    This class defines the tools available to the LLM during the conversation,
+    allowing it to fetch tenant context and execute maintenance workflows
+    dynamically based on user input.
     """
 
     def __init__(self, mcp_session):
@@ -38,7 +41,15 @@ class DispatcherClient(llm.FunctionContext):
         )
     )
     async def lookup_unit(self, unit_number: str):
-        """Fetches tenant name and asset inventory for a given unit."""
+        """Fetches the tenant's name and asset inventory for a specific unit.
+
+        Args:
+            unit_number (str): The residential unit number provided by the tenant.
+
+        Returns:
+            str: A raw text string containing the tenant name and a list of 
+                available assets (brands, names, and serial numbers).
+        """
         print(f"[AGENT] Looking up context for Unit: {unit_number}")
         result = await self.mcp.call_tool(
             "get_tenant_context", arguments={"unit_number": unit_number}
@@ -55,7 +66,15 @@ class DispatcherClient(llm.FunctionContext):
         )
     )
     async def execute_request(self, serial_number: str):
-        """Triggers the maintenance workflow."""
+        """Triggers the backend maintenance workflow for a specific serial number.
+
+        Args:
+            serial_number (str): The unique serial number of the asset to be repaired.
+
+        Returns:
+            str: The confirmation message from the MCP server regarding 
+                the dispatch or booking status.
+        """
         print(f"[AGENT] Executing Request for Serial: {serial_number}")
         result = await self.mcp.call_tool(
             "execute_maintenance", arguments={"serial_number": serial_number}
@@ -64,7 +83,19 @@ class DispatcherClient(llm.FunctionContext):
 
 
 async def entrypoint(ctx: JobContext):
-    """Main agent entrypoint."""
+    """The main execution loop for the LiveKit Voice Agent.
+
+    This function orchestrates the following lifecycle:
+    1. Connects to the LiveKit room with audio-only permissions.
+    2. Spawns the MCP server as a subprocess via stdio.
+    3. Retrieves the latest system prompt from Langfuse.
+    4. Initializes the OpenAI Realtime model with environment-based settings.
+    5. Starts the MultimodalAgent and forces an initial greeting reply.
+
+    Args:
+        ctx (JobContext): The LiveKit job context providing room and 
+            participant information.
+    """
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     participant = await ctx.wait_for_participant()
 

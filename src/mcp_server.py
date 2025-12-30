@@ -16,7 +16,14 @@ mcp = FastMCP("SmartBuildingDispatcher")
 
 
 def get_db_connection():
-    """Helper to get a DB connection using an absolute path to the data dir."""
+    """Establishes a connection to the SQLite database with row access enabled.
+
+    Locates the database file in the 'data' directory relative to the project root.
+    Sets the row_factory to sqlite3.Row to allow accessing columns by name.
+
+    Returns:
+        sqlite3.Connection: A configured connection object to the maintenance database.
+    """
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     db_path = os.path.join(base_dir, "data", "maintenance.db")
     conn = sqlite3.connect(db_path)
@@ -24,8 +31,21 @@ def get_db_connection():
     return conn
 
 
-def internal_send_email(recipient, subject, body):
-    """Sends email via mock SMTP and logs to SQLite."""
+def internal_send_email(recipient: str, subject: str, body: str):
+    """Sends an email via mock SMTP and logs the transaction to the database.
+
+    Constructs a MIME multipart message and delivers it to a local SMTP server 
+    on port 1025. Upon successful delivery, it creates a record in the 
+    'email_logs' table for auditing in the dashboard.
+
+    Args:
+        recipient (str): The email address of the receiver.
+        subject (str): The subject line of the email.
+        body (str): The plain-text body of the email.
+
+    Returns:
+        bool: True if both the email was sent and the log was created, False otherwise.
+    """
     print(f"[MCP SERVER] Sending email to {recipient}...")
 
     msg = MIMEMultipart()
@@ -59,8 +79,20 @@ def internal_send_email(recipient, subject, body):
 
 
 @mcp.tool()
-def get_tenant_context(unit_number: str) -> str:
-    """Retrieves tenant name and asset list for a specific unit."""
+@mcp.tool()
+def get_tenant_context(unit_number: str):
+    """Retrieves tenant information and a list of unit assets for the AI context.
+
+    Queries the database for the tenant's name and all assets associated with the 
+    provided unit number, including brand, serial number, and warranty expiration.
+
+    Args:
+        unit_number (str): The residential unit number (e.g., "205").
+
+    Returns:
+        str: A formatted string containing the tenant name and a list of assets. 
+             Returns an error message string if the query fails.
+    """
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -93,8 +125,22 @@ def get_tenant_context(unit_number: str) -> str:
 
 
 @mcp.tool()
-def execute_maintenance(serial_number: str) -> str:
-    """Checks warranty and dispatches maintenance workflow."""
+@mcp.tool()
+def execute_maintenance(serial_number: str):
+    """Orchestrates the maintenance workflow based on warranty status.
+
+    Performs a database lookup for an asset by serial number, determines if 
+    it is under warranty, and executes the appropriate dispatch branch:
+    - Active Warranty: Contacts the manufacturer's support email.
+    - Expired Warranty: Books a slot via CalendarService and contacts internal staff.
+
+    Args:
+        serial_number (str): The unique serial number of the asset requiring repair.
+
+    Returns:
+        str: A confirmation message describing the action taken (email sent, 
+             booking time, etc.) to be read back to the user.
+    """
     print(f"\n[MCP SERVER] Processing Serial: {serial_number}")
 
     conn = get_db_connection()

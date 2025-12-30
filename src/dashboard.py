@@ -11,17 +11,31 @@ st.set_page_config(
 
 # --- DATABASE CONNECTION ---
 def get_connection():
-    """Establishes and returns a connection to the local SQLite database,
-    locating it via absolute path in the data directory.
+    """Establishes a connection to the local SQLite database.
+
+    Calculates the absolute path to the 'maintenance.db' file located in the 
+    'data' directory relative to the project root.
+
+    Returns:
+        sqlite3.Connection: A connection object to the SQLite database.
     """
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     db_path = os.path.join(base_dir, "data", "maintenance.db")
     return sqlite3.connect(db_path)
 
 
-def load_data(query):
-    """Executes a SQL query against the database and returns the result as a
-    Pandas DataFrame.
+def load_data(query: str) -> pd.DataFrame:
+    """Executes a SQL query and returns the results as a DataFrame.
+
+    This helper function manages the lifecycle of a database connection: 
+    opening the connection, executing the provided SQL query via Pandas, 
+    and ensuring the connection is closed afterward.
+
+    Args:
+        query (str): The SQL SELECT query to be executed.
+
+    Returns:
+        pd.DataFrame: A Pandas DataFrame containing the results of the query.
     """
     conn = get_connection()
     df = pd.read_sql_query(query, conn)
@@ -81,9 +95,18 @@ with tab1:
     )
 
     # Color code the status
-    def highlight_status(val):
-        """Returns CSS styling to color-code the status: Green for SENT,
-        Red for others.
+    def highlight_status(val: str) -> str:
+        """Returns CSS styling for color-coding the dispatch status.
+
+        Applies a green color to 'SENT' statuses and red to any other values 
+        (like failures or pending) to provide immediate visual feedback 
+        in the data table.
+
+        Args:
+            val (str): The status string from the database column.
+
+        Returns:
+            str: A CSS string for styling the specific table cell.
         """
         color = "green" if val == "SENT" else "red"
         return f"color: {color}; font-weight: bold"
